@@ -1,0 +1,174 @@
+version: "3.9"
+
+services:
+
+  ce1:
+    image: ligato/vpp-base:latest
+    container_name: ce1
+    privileged: true
+    stdin_open: true
+    tty: true
+    networks:
+      ce1_pe1:
+        ipv4_address: 100.64.1.20
+
+  ce3:
+    image: ligato/vpp-base:latest
+    container_name: ce3
+    privileged: true
+    stdin_open: true
+    tty: true
+    networks:
+      ce3_pe1:
+        ipv4_address: 100.64.6.20
+
+  ce5:
+    image: ligato/vpp-base:latest
+    container_name: ce5
+    privileged: true
+    stdin_open: true
+    tty: true
+    networks:
+      ce5_pe1:
+        ipv4_address: 100.64.8.20
+
+  pe1:
+    image: ligato/vpp-base:latest
+    container_name: pe1
+    privileged: true
+    stdin_open: true
+    tty: true
+    networks:
+      ce1_pe1:
+        ipv4_address: 100.64.1.10
+      pe1_lsr1:
+        ipv4_address: 100.64.2.10
+      ce3_pe1:
+        ipv4_address: 100.64.6.10
+      ce5_pe1:
+        ipv4_address: 100.64.8.10
+
+  lsr1:
+    image: ligato/vpp-base:latest
+    container_name: lsr1
+    privileged: true
+    stdin_open: true
+    tty: true
+    networks:
+      pe1_lsr1:
+        ipv4_address: 100.64.2.20
+      lsr1_lsr2:
+        ipv4_address: 100.64.3.10
+
+  lsr2:
+    image: ligato/vpp-base:latest
+    container_name: lsr2
+    privileged: true
+    stdin_open: true
+    tty: true
+    networks:
+      lsr1_lsr2:
+        ipv4_address: 100.64.3.20
+      lsr2_pe2:
+        ipv4_address: 100.64.4.10
+
+  pe2:
+    image: ligato/vpp-base:latest
+    container_name: pe2
+    privileged: true
+    stdin_open: true
+    tty: true
+    networks:
+      lsr2_pe2:
+        ipv4_address: 100.64.4.20
+      pe2_ce2:
+        ipv4_address: 100.64.5.10
+      pe2_ce4:
+        ipv4_address: 100.64.7.10
+      pe2_ce6:
+        ipv4_address: 100.64.9.10
+
+  ce2:
+    image: ligato/vpp-base:latest
+    container_name: ce2
+    privileged: true
+    stdin_open: true
+    tty: true
+    networks:
+      pe2_ce2:
+        ipv4_address: 100.64.5.20
+
+  ce4:
+    image: ligato/vpp-base:latest
+    container_name: ce4
+    privileged: true
+    stdin_open: true
+    tty: true
+    networks:
+      pe2_ce4:
+        ipv4_address: 100.64.7.20
+
+  ce6:
+    image: ligato/vpp-base:latest
+    container_name: ce6
+    privileged: true
+    stdin_open: true
+    tty: true
+    networks:
+      pe2_ce6:
+        ipv4_address: 100.64.9.20
+
+networks:
+  ce1_pe1:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 100.64.1.0/24
+
+  pe1_lsr1:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 100.64.2.0/24
+
+  lsr1_lsr2:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 100.64.3.0/24
+
+  lsr2_pe2:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 100.64.4.0/24
+
+  pe2_ce2:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 100.64.5.0/24
+
+  ce3_pe1:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 100.64.6.0/24
+
+  pe2_ce4:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 100.64.7.0/24
+
+  ce5_pe1:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 100.64.8.0/24
+
+  pe2_ce6:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 100.64.9.0/24
