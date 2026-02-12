@@ -3,41 +3,51 @@ version: "3.9"
 services:
 
   ce1:
-    image: ligato/vpp-base:latest
+    image: vpp-frr:latest
     container_name: ce1
     privileged: true
     stdin_open: true
     tty: true
+    volumes:
+      - ./frr-configs/ce1.conf:/etc/frr/frr.conf:ro
     networks:
       ce1_pe1:
         ipv4_address: 100.64.1.20
+      customer1_lan1:
+        ipv4_address: 10.1.1.1
 
   ce3:
-    image: ligato/vpp-base:latest
+    image: vpp-frr:latest
     container_name: ce3
     privileged: true
     stdin_open: true
     tty: true
+    volumes:
+      - ./frr-configs/ce3.conf:/etc/frr/frr.conf:ro
     networks:
       ce3_pe1:
         ipv4_address: 100.64.6.20
 
   ce5:
-    image: ligato/vpp-base:latest
+    image: vpp-frr:latest
     container_name: ce5
     privileged: true
     stdin_open: true
     tty: true
+    volumes:
+      - ./frr-configs/ce5.conf:/etc/frr/frr.conf:ro
     networks:
       ce5_pe1:
         ipv4_address: 100.64.8.20
 
   pe1:
-    image: ligato/vpp-base:latest
+    image: vpp-frr:latest
     container_name: pe1
     privileged: true
     stdin_open: true
     tty: true
+    volumes:
+      - ./frr-configs/pe1.conf:/etc/frr/frr.conf:ro
     networks:
       ce1_pe1:
         ipv4_address: 100.64.1.10
@@ -47,13 +57,17 @@ services:
         ipv4_address: 100.64.6.10
       ce5_pe1:
         ipv4_address: 100.64.8.10
+      pe_mgmt:
+        ipv4_address: 10.255.0.1
 
   lsr1:
-    image: ligato/vpp-base:latest
+    image: vpp-frr:latest
     container_name: lsr1
     privileged: true
     stdin_open: true
     tty: true
+    volumes:
+      - ./frr-configs/lsr1.conf:/etc/frr/frr.conf:ro
     networks:
       pe1_lsr1:
         ipv4_address: 100.64.2.20
@@ -61,11 +75,13 @@ services:
         ipv4_address: 100.64.3.10
 
   lsr2:
-    image: ligato/vpp-base:latest
+    image: vpp-frr:latest
     container_name: lsr2
     privileged: true
     stdin_open: true
     tty: true
+    volumes:
+      - ./frr-configs/lsr2.conf:/etc/frr/frr.conf:ro
     networks:
       lsr1_lsr2:
         ipv4_address: 100.64.3.20
@@ -73,11 +89,13 @@ services:
         ipv4_address: 100.64.4.10
 
   pe2:
-    image: ligato/vpp-base:latest
+    image: vpp-frr:latest
     container_name: pe2
     privileged: true
     stdin_open: true
     tty: true
+    volumes:
+      - ./frr-configs/pe2.conf:/etc/frr/frr.conf:ro
     networks:
       lsr2_pe2:
         ipv4_address: 100.64.4.20
@@ -87,36 +105,66 @@ services:
         ipv4_address: 100.64.7.10
       pe2_ce6:
         ipv4_address: 100.64.9.10
+      pe_mgmt:
+        ipv4_address: 10.255.0.2
 
   ce2:
-    image: ligato/vpp-base:latest
+    image: vpp-frr:latest
     container_name: ce2
     privileged: true
     stdin_open: true
     tty: true
+    volumes:
+      - ./frr-configs/ce2.conf:/etc/frr/frr.conf:ro
     networks:
       pe2_ce2:
         ipv4_address: 100.64.5.20
+      customer1_lan2:
+        ipv4_address: 10.1.2.1
 
   ce4:
-    image: ligato/vpp-base:latest
+    image: vpp-frr:latest
     container_name: ce4
     privileged: true
     stdin_open: true
     tty: true
+    volumes:
+      - ./frr-configs/ce4.conf:/etc/frr/frr.conf:ro
     networks:
       pe2_ce4:
         ipv4_address: 100.64.7.20
 
   ce6:
-    image: ligato/vpp-base:latest
+    image: vpp-frr:latest
     container_name: ce6
     privileged: true
     stdin_open: true
     tty: true
+    volumes:
+      - ./frr-configs/ce6.conf:/etc/frr/frr.conf:ro
     networks:
       pe2_ce6:
         ipv4_address: 100.64.9.20
+
+  host1:
+    image: ubuntu:22.04
+    container_name: host1
+    command: sleep infinity
+    cap_add:
+      - NET_ADMIN
+    networks:
+      customer1_lan1:
+        ipv4_address: 10.1.1.10
+
+  host2:
+    image: ubuntu:22.04
+    container_name: host2
+    command: sleep infinity
+    cap_add:
+      - NET_ADMIN
+    networks:
+      customer1_lan2:
+        ipv4_address: 10.1.2.10
 
 networks:
   ce1_pe1:
@@ -172,3 +220,24 @@ networks:
     ipam:
       config:
         - subnet: 100.64.9.0/24
+
+  customer1_lan1:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.1.1.0/24
+          gateway: 10.1.1.254
+
+  customer1_lan2:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.1.2.0/24
+          gateway: 10.1.2.254
+
+  pe_mgmt:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.255.0.0/24
+          gateway: 10.255.0.254
