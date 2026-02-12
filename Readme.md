@@ -9,24 +9,38 @@ running inside Docker containers.
 |--------|-------------|
 | `main` | Phase 1 — Static MPLS routes, no control plane |
 | `mp-bgp` | Phase 2 — MP-BGP (VPNv4) via FRR for VPN route exchange |
+| `security-pe-gre` | Phase 3 — Security PE connected via MPLS-over-GRE tunnel |
 
-## Current: Phase 2 (MP-BGP)
+## Current: Phase 3 (Security PE via MPLS-over-GRE)
+
+Extends Phase 2 with a remote Security PE (PE-SEC) connected to the MPLS core
+via a GRE tunnel. Demonstrates MPLS-over-GRE for remote site connectivity and
+security device insertion.
 
 Topology includes:
-- 2 Provider Edge (PE) routers — VPP + FRR (bgpd)
+- 3 Provider Edge (PE) routers — PE1, PE2, PE-SEC (VPP + FRR)
 - 2 Label Switch Routers (LSR) — VPP + FRR (minimal)
-- 6 Customer Edge (CE) routers — VPP + FRR (bgpd)
-- 2 End Hosts — plain Ubuntu containers (host1 behind CE1, host2 behind CE2)
+- 7 Customer Edge (CE) routers — CE1-CE6 + FW (VPP + FRR)
+- 3 End Hosts — host1, host2, sec-host (plain Ubuntu containers)
+- 1 GRE tunnel — LSR2 ↔ PE-SEC (MPLS-over-GRE)
+
+New in this phase:
+- **PE-SEC**: Remote PE connected to LSR2 via GRE tunnel (203.0.113.0/24)
+- **FW**: Security device acting as CE (eBGP ASN 65010, VRF 10)
+- **sec-host**: End host behind FW (10.100.1.10)
+- **MPLS-over-GRE**: GRE tunnel with point-to-point IPs (172.16.0.0/30), MPLS enabled
 
 Control Plane:
-- **PE1 ↔ PE2**: MP-iBGP (ASN 65000, VPNv4 address family)
+- **PE1 ↔ PE2 ↔ PE-SEC**: MP-iBGP (ASN 65000, VPNv4 address family)
 - **CE1/CE2 ↔ PE**: eBGP (ASN 65001, VRF 10)
 - **CE3/CE4 ↔ PE**: eBGP (ASN 65002, VRF 20)
 - **CE5/CE6 ↔ PE**: eBGP (ASN 65003, VRF 30)
+- **FW ↔ PE-SEC**: eBGP (ASN 65010, VRF 10)
 
 End Hosts (VRF 10 only):
 - **host1** (10.1.1.10) → behind CE1, customer LAN 10.1.1.0/24
 - **host2** (10.1.2.10) → behind CE2, customer LAN 10.1.2.0/24
+- **sec-host** (10.100.1.10) → behind FW, security LAN 10.100.1.0/24
 - Hosts know nothing about MPLS/BGP — just a default route to their CE gateway
 
 VRF Assignment:
@@ -132,17 +146,46 @@ host1 (10.1.1.10) ─── 10.1.1.0/24 ─── CE1 (10.1.1.1) ═══ PE1 �
 
 Packet path: host1 → CE1 (eBGP route) → PE1 (MPLS encap: transport + VPN label) → LSR1 → LSR2 → PE2 (MPLS decap) → CE2 (IP forward) → host2
 
+
+Security PE Connectivity (VRF 10, MPLS-over-GRE):
+
+```
+sec-host (10.100.1.10) ── 10.100.1.0/24 ── FW (10.100.1.1) ═══ PE-SEC ═══ GRE tunnel ═══ LSR2 ═══ LSR1 ═══ PE1 ═══ CE1 (10.1.1.1) ── host1
+                           security LAN           100.64.100.0/24     203.0.113.0/24        MPLS core
+```
+
+GRE Tunnel Detail:
+```
+LSR2 (gre0: 172.16.0.1/30)  ═══════  PE-SEC (gre0: 172.16.0.2/30)
+     src: 203.0.113.1                      src: 203.0.113.2
+     dst: 203.0.113.2                      dst: 203.0.113.1
+     MPLS enabled                          MPLS enabled
+```
+
+Packet path (sec-host → host1):
+sec-host → FW → PE-SEC (MPLS encap [1400,600]) → GRE tunnel → LSR2 (swap 1400→1401) → LSR1 (swap 1401→1402) → PE1 (MPLS decap) → CE1 → host1
+
 End Host Addressing:
 
-| Host  | IP Address | Gateway (CE) | CE LAN Subnet |
-|-------|------------|--------------|---------------|
-| host1 | 10.1.1.10  | 10.1.1.1 (CE1) | 10.1.1.0/24 |
-| host2 | 10.1.2.10  | 10.1.2.1 (CE2) | 10.1.2.0/24 |
+| Host     | IP Address  | Gateway (CE) | CE LAN Subnet  |
+|----------|------------|--------------|----------------|
+| host1    | 10.1.1.10  | 10.1.1.1 (CE1) | 10.1.1.0/24 |
+| host2    | 10.1.2.10  | 10.1.2.1 (CE2) | 10.1.2.0/24 |
+| sec-host | 10.100.1.10| 10.100.1.1 (FW)| 10.100.1.0/24|
 
 MPLS Label Assignments:
 
+  PE1↔PE2 (existing):
   Forward (PE1→PE2):  Transport labels 100→200→300, VPN labels: 500 (VRF 10), 700 (VRF 20), 900 (VRF 30)
   Return  (PE2→PE1):  Transport labels 400→401→402, VPN labels: 600 (VRF 10), 800 (VRF 20), 1000 (VRF 30)
+
+  PE1→PE-SEC (via LSR1→LSR2→GRE):
+  Forward: Transport labels 150→250→310, VPN label: 1100 (VRF 10 on PE-SEC)
+  Return:  Transport labels 1400→1401→1402, VPN label: 600 (VRF 10 on PE1)
+
+  PE2→PE-SEC (via LSR2→GRE):
+  Forward: Transport labels 1300→310, VPN label: 1100 (VRF 10 on PE-SEC)
+  Return:  Transport labels 1500→1501, VPN label: 500 (VRF 10 on PE2)
 
 
 ------------------------------------------------------------
@@ -159,6 +202,9 @@ WHAT THIS LAB DEMONSTRATES
 - Overlapping IP addresses across VRFs (VRF 20 and VRF 30 use same CE IPs)
 - End hosts with no MPLS/BGP knowledge — just IP + default route
 - Route Distinguisher (RD) and Route Target (RT) for VPNv4
+- **MPLS-over-GRE** — extending MPLS LSPs over IP GRE tunnels
+- **Remote PE** — PE-SEC provides L3VPN service over a GRE tunnel
+- **Security device insertion** — FW acts as a security gateway in VRF 10
 
 At ingress PE, packet format becomes:
 
@@ -176,9 +222,11 @@ BGP ASN AND VRF ASSIGNMENTS
 |----------|-------|----------------------------|
 | PE1      | 65000 | Provider iBGP              |
 | PE2      | 65000 | Provider iBGP              |
+| PE-SEC   | 65000 | Provider iBGP (remote PE)  |
 | CE1, CE2 | 65001 | Customer 1 (VRF 10)        |
 | CE3, CE4 | 65002 | Customer 2 (VRF 20)        |
 | CE5, CE6 | 65003 | Customer 3 (VRF 30)        |
+| FW       | 65010 | Security device (VRF 10)   |
 
 | VRF    | RD        | Import RT  | Export RT  |
 |--------|-----------|------------|------------|
@@ -221,8 +269,8 @@ Verify containers:
 
 docker ps
 
-You should see 12 containers:
-ce1, ce3, ce5, pe1, lsr1, lsr2, pe2, ce2, ce4, ce6, host1, host2
+You should see 15 containers:
+ce1, ce3, ce5, pe1, lsr1, lsr2, pe2, ce2, ce4, ce6, host1, host2, pe-sec, fw, sec-host
 
 
 3) Program VPP + Start FRR
@@ -234,13 +282,15 @@ The script:
 - Waits for VPP to be ready in all containers
 - Creates VPP host interfaces and detects interface mapping
 - **Syncs VPP af-packet MACs with Linux interface MACs** (prevents L3 MAC mismatch drops)
-- Configures VRFs (10, 20, 30) on PE1 and PE2
+- Configures VRFs (10, 20, 30) on PE1 and PE2, VRF 10 on PE-SEC
 - Installs static MPLS transport labels on LSRs
+- **Creates GRE tunnels** between LSR2 and PE-SEC with MPLS enabled
+- Installs MPLS transport labels for GRE path (PE-SEC ↔ PE1/PE2)
 - Configures local CE LAN routes in VPP VRF tables
 - Uses Docker `pe_mgmt` bridge network (10.255.0.0/24) for PE-PE iBGP peering
 - Sets up Linux VRF devices for FRR per-VRF BGP instances
 - Adds Linux blackhole routes to suppress false ICMP unreachable from kernel
-- Starts FRR (zebra + bgpd) on all nodes
+- Starts FRR (zebra + bgpd) on all nodes including PE-SEC and FW
 - Installs tools on end hosts and sets default routes
 - Displays BGP session status
 
@@ -253,6 +303,7 @@ VERIFICATION
 
 docker exec -it pe1 vtysh -c 'show bgp summary'
 docker exec -it pe2 vtysh -c 'show bgp summary'
+docker exec -it pe-sec vtysh -c 'show bgp summary'
 
 --- VPNv4 Routes (MP-iBGP between PEs) ---
 
@@ -275,8 +326,16 @@ docker exec -it ce5 vppctl ping 100.64.7.20    # VRF 30
 
 docker exec -it host1 ping -c 3 10.1.2.10      # host1 → host2 across MPLS core
 docker exec -it host2 ping -c 3 10.1.1.10      # host2 → host1 across MPLS core
+docker exec -it sec-host ping -c 3 10.1.1.10   # sec-host → host1 (MPLS-over-GRE)
+docker exec -it sec-host ping -c 3 10.1.2.10   # sec-host → host2 (MPLS-over-GRE)
+docker exec -it host1 ping -c 3 10.100.1.10    # host1 → sec-host (MPLS-over-GRE)
 docker exec -it host1 traceroute 10.1.2.10      # trace path through MPLS
 docker exec -it host1 ping -c 3 10.1.1.1       # host1 → CE1 gateway (sanity check)
+
+--- GRE Tunnel Status ---
+
+docker exec -it lsr2 vppctl show gre tunnel
+docker exec -it pe-sec vppctl show gre tunnel
 
 --- Check MPLS FIB ---
 
@@ -362,18 +421,24 @@ NOTES
   affect functionality. Linux blackhole routes prevent false ICMP unreachable generation.
 - FRR 10.5.1 enforces `ebgp-requires-policy` by default — CE configs use
   `no bgp ebgp-requires-policy` to allow route exchange without explicit route-maps.
+- **MPLS-over-GRE**: VPP creates a GRE tunnel interface (`gre0`) with point-to-point IPs
+  (172.16.0.0/30). MPLS is enabled on the GRE interface, and MPLS label entries use it
+  like any other interface. The GRE tunnel's outer IP header (203.0.113.0/24) provides
+  transport across the Docker bridge, while inner MPLS labels handle VPN forwarding.
+- **Docker gateway conflict**: Docker auto-assigns .1 as the bridge gateway for networks
+  without an explicit gateway. If a container needs that IP, add `gateway: x.x.x.254`
+  to the network definition to avoid "Address already in use" errors.
 
 
 ------------------------------------------------------------
 SUGGESTED EXTENSIONS (FUTURE PHASES)
 ------------------------------------------------------------
 
-- Phase 3: Add LDP for transport label distribution
-- Phase 4: Add RSVP-TE for traffic-engineered LSPs
+- Phase 4: Add LDP for transport label distribution
+- Phase 5: Add RSVP-TE for traffic-engineered LSPs
 - Implement Penultimate Hop Popping (PHP)
 - Add SR-MPLS (Segment Routing)
 - Add ECMP path
-- MPLS-over-GRE for remote security device insertion
 - Route Reflector (RR) for scalable iBGP
 - Convert to containerlab topology
 - Automate via Makefile or CI pipeline
@@ -384,8 +449,8 @@ PROJECT STRUCTURE
 ------------------------------------------------------------
 
 .
-├── docker-compose.yaml    # 12 containers, 12 bridge networks
-├── setup.sh               # VPP data plane + FRR startup + host setup script
+├── docker-compose.yaml    # 15 containers, 15 bridge networks
+├── setup.sh               # VPP data plane + GRE tunnels + FRR startup + host setup
 ├── Readme.md
 ├── validation.md          # Packet traces and verification
 ├── frr-vpp/
@@ -395,6 +460,8 @@ PROJECT STRUCTURE
 └── frr-configs/
     ├── pe1.conf            # MP-iBGP + eBGP (VRF 10/20/30)
     ├── pe2.conf            # MP-iBGP + eBGP (VRF 10/20/30)
+    ├── pe-sec.conf         # MP-iBGP + eBGP (VRF 10, GRE remote PE)
+    ├── fw.conf             # eBGP ASN 65010 (security device)
     ├── ce1.conf            # eBGP ASN 65001
     ├── ce2.conf            # eBGP ASN 65001
     ├── ce3.conf            # eBGP ASN 65002
@@ -415,6 +482,8 @@ LEARNING GOALS
 - **eBGP PE-CE route learning** with FRR
 - **Control plane / data plane separation** (FRR + VPP)
 - **End-to-end host connectivity** across MPLS/VPN backbone
+- **MPLS-over-GRE tunneling** for remote PE connectivity
+- **Security device insertion** via remote PE architecture
 - VRF isolation with Route Distinguisher and Route Target
 - Practice PE/LSR/CE role separation
 - Deep dataplane + control plane debugging

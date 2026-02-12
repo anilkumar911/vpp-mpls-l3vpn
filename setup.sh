@@ -63,14 +63,14 @@ function wait_for_vpp() {
 }
 
 echo "============================================"
-echo "  Phase 2: VPP + FRR (MP-BGP) Setup"
+echo "  Phase 2+: VPP + FRR (MP-BGP + Security PE GRE) Setup"
 echo "============================================"
 echo ""
 
 echo "============================================"
 echo "  Waiting for VPP to be ready"
 echo "============================================"
-for node in ce1 ce3 ce5 pe1 lsr1 lsr2 pe2 ce2 ce4 ce6; do
+for node in ce1 ce3 ce5 pe1 lsr1 lsr2 pe2 ce2 ce4 ce6 pe-sec fw; do
   wait_for_vpp "$node"
 done
 
@@ -103,6 +103,7 @@ vpp_exec lsr1 "create host-interface name eth1"
 echo "LSR2..."
 vpp_exec lsr2 "create host-interface name eth0"
 vpp_exec lsr2 "create host-interface name eth1"
+vpp_exec lsr2 "create host-interface name eth2"
 
 echo "PE2..."
 vpp_exec pe2 "create host-interface name eth0"
@@ -121,12 +122,21 @@ vpp_exec ce4 "create host-interface name eth0"
 echo "CE6..."
 vpp_exec ce6 "create host-interface name eth0"
 
+echo "PE-SEC..."
+vpp_exec pe-sec "create host-interface name eth0"
+vpp_exec pe-sec "create host-interface name eth1"
+vpp_exec pe-sec "create host-interface name eth2"
+
+echo "FW..."
+vpp_exec fw "create host-interface name eth0"
+vpp_exec fw "create host-interface name eth1"
+
 echo ""
 echo "============================================"
 echo "  Syncing VPP MAC with Linux MAC"
 echo "============================================"
 echo "  (Fix af-packet l3 mac mismatch drops)"
-for node in ce1 ce3 ce5 pe1 lsr1 lsr2 pe2 ce2 ce4 ce6; do
+for node in ce1 ce3 ce5 pe1 lsr1 lsr2 pe2 ce2 ce4 ce6 pe-sec fw; do
   for iface in eth0 eth1 eth2 eth3 eth4; do
     if docker exec -i "$node" ip link show "$iface" > /dev/null 2>&1; then
       sync_mac "$node" "$iface"
@@ -159,10 +169,11 @@ LSR1_PE1=$(get_iface lsr1 "100.64.2.")
 LSR1_LSR2=$(get_iface lsr1 "100.64.3.")
 echo "  LSR1: PE1-side=host-$LSR1_PE1, LSR2-side=host-$LSR1_LSR2"
 
-# LSR2: 2 interfaces
+# LSR2: 3 interfaces (2 core + 1 GRE transport)
 LSR2_LSR1=$(get_iface lsr2 "100.64.3.")
 LSR2_PE2=$(get_iface lsr2 "100.64.4.")
-echo "  LSR2: LSR1-side=host-$LSR2_LSR1, PE2-side=host-$LSR2_PE2"
+LSR2_GRE=$(get_iface lsr2 "203.0.113.")
+echo "  LSR2: LSR1-side=host-$LSR2_LSR1, PE2-side=host-$LSR2_PE2, GRE=host-$LSR2_GRE"
 
 # PE2: 5 interfaces (4 data + 1 mgmt)
 PE2_CORE=$(get_iface pe2 "100.64.4.")
@@ -177,17 +188,29 @@ CE2_PE=$(get_iface ce2 "100.64.5.")
 CE2_LAN=$(get_iface ce2 "10.1.2.")
 echo "  CE2: PE=host-$CE2_PE, LAN=host-$CE2_LAN"
 
+# PE-SEC: 3 interfaces (GRE transport + sec_lan + mgmt)
+PESEC_GRE=$(get_iface pe-sec "203.0.113.")
+PESEC_SEC=$(get_iface pe-sec "100.64.100.")
+PESEC_MGMT=$(get_iface pe-sec "10.255.0.")
+echo "  PE-SEC: GRE=host-$PESEC_GRE, SecLAN=host-$PESEC_SEC, Mgmt=$PESEC_MGMT"
+
+# FW: 2 interfaces (PE-SEC facing + LAN-facing)
+FW_PE=$(get_iface fw "100.64.100.")
+FW_LAN=$(get_iface fw "10.100.1.")
+echo "  FW: PE=host-$FW_PE, LAN=host-$FW_LAN"
+
 echo ""
 echo "============================================"
 echo "  Flushing Linux IPs (prevent MAC mismatch)"
 echo "============================================"
 echo "  (Skipping management interfaces on PEs)"
-for node in ce1 ce3 ce5 pe1 lsr1 lsr2 pe2 ce2 ce4 ce6; do
+for node in ce1 ce3 ce5 pe1 lsr1 lsr2 pe2 ce2 ce4 ce6 pe-sec fw; do
   echo "  Flushing $node..."
   for iface in eth0 eth1 eth2 eth3 eth4; do
     # Skip the management interface on PEs (used for iBGP peering)
     if [[ "$node" == "pe1" && "$iface" == "$PE1_MGMT" ]]; then continue; fi
     if [[ "$node" == "pe2" && "$iface" == "$PE2_MGMT" ]]; then continue; fi
+    if [[ "$node" == "pe-sec" && "$iface" == "$PESEC_MGMT" ]]; then continue; fi
     docker exec -i "$node" ip addr flush dev "$iface" 2>/dev/null || true
   done
 done
@@ -304,6 +327,7 @@ vpp_exec pe1 "set interface ip address loop0 10.255.0.1/32"
 
 # --- Transport label processing (static) ---
 vpp_exec pe1 "mpls local-label 402 non-eos via mpls-lookup-in-table 0"
+vpp_exec pe1 "mpls local-label 1402 non-eos via mpls-lookup-in-table 0"
 
 # --- VPN label disposition (static fallback) ---
 vpp_exec pe1 "mpls local-label 600 eos via ip4-lookup-in-table 10"
@@ -316,6 +340,9 @@ vpp_exec pe1 "ip route add 100.64.5.0/24 table 10 via 100.64.2.20 host-$PE1_CORE
 vpp_exec pe1 "ip route add 10.1.2.0/24 table 10 via 100.64.2.20 host-$PE1_CORE out-labels 100 500"
 vpp_exec pe1 "ip route add 100.64.7.0/24 table 20 via 100.64.2.20 host-$PE1_CORE out-labels 100 700"
 vpp_exec pe1 "ip route add 100.64.7.0/24 table 30 via 100.64.2.20 host-$PE1_CORE out-labels 100 900"
+# Remote routes via MPLS to PE-SEC (through LSR1→LSR2→GRE):
+vpp_exec pe1 "ip route add 100.64.100.0/24 table 10 via 100.64.2.20 host-$PE1_CORE out-labels 150 1100"
+vpp_exec pe1 "ip route add 10.100.1.0/24 table 10 via 100.64.2.20 host-$PE1_CORE out-labels 150 1100"
 # Local CE-connected LAN routes (so PE1 can forward decapsulated MPLS traffic to CEs):
 vpp_exec pe1 "ip route add 10.1.1.0/24 table 10 via 100.64.1.20 host-$PE1_CE1"
 
@@ -344,6 +371,8 @@ docker exec -i pe1 ip link set "$PE1_CE5" master VRF30 2>/dev/null || true
 # means both VPP and Linux see every packet; VPP handles it via MPLS,
 # Linux must silently drop to avoid confusing the source host)
 docker exec -i pe1 ip route add blackhole 10.1.2.0/24 vrf VRF10 2>/dev/null || true
+docker exec -i pe1 ip route add blackhole 10.100.1.0/24 vrf VRF10 2>/dev/null || true
+docker exec -i pe1 ip route add blackhole 100.64.100.0/24 vrf VRF10 2>/dev/null || true
 
 echo ""
 echo "============================================"
@@ -358,14 +387,22 @@ vpp_exec lsr1 "mpls table add 0"
 vpp_exec lsr1 "set interface mpls host-$LSR1_PE1 enable"
 vpp_exec lsr1 "set interface mpls host-$LSR1_LSR2 enable"
 
+# --- Existing PE1↔PE2 transport labels ---
 # Forward: Swap 100 → 200
 vpp_exec lsr1 "mpls local-label 100 non-eos via 100.64.3.20 host-$LSR1_LSR2 out-labels 200"
 # Return: Swap 401 → 402
 vpp_exec lsr1 "mpls local-label 401 non-eos via 100.64.2.10 host-$LSR1_PE1 out-labels 402"
 
+# --- PE-SEC transport labels ---
+# Forward PE1→PE-SEC: Swap 150 → 250
+vpp_exec lsr1 "mpls local-label 150 non-eos via 100.64.3.20 host-$LSR1_LSR2 out-labels 250"
+# Return PE-SEC→PE1: Swap 1401 → 1402
+vpp_exec lsr1 "mpls local-label 1401 non-eos via 100.64.2.10 host-$LSR1_PE1 out-labels 1402"
+
 # IP routes for PE loopback reachability (BGP next-hop)
 vpp_exec lsr1 "ip route add 10.255.0.1/32 via 100.64.2.10"
 vpp_exec lsr1 "ip route add 10.255.0.2/32 via 100.64.3.20"
+vpp_exec lsr1 "ip route add 10.255.0.3/32 via 100.64.3.20"
 
 # Linux IP addresses and routes for IP transit (PE-PE iBGP uses Linux TCP)
 docker exec -i lsr1 ip addr add 100.64.2.20/24 dev "$LSR1_PE1" 2>/dev/null || true
@@ -380,21 +417,41 @@ echo "  Configuring LSR2 (Label Switch Router)"
 echo "============================================"
 vpp_exec lsr2 "set interface state host-$LSR2_LSR1 up"
 vpp_exec lsr2 "set interface state host-$LSR2_PE2 up"
+vpp_exec lsr2 "set interface state host-$LSR2_GRE up"
 vpp_exec lsr2 "set interface ip address host-$LSR2_LSR1 100.64.3.20/24"
 vpp_exec lsr2 "set interface ip address host-$LSR2_PE2 100.64.4.10/24"
+vpp_exec lsr2 "set interface ip address host-$LSR2_GRE 203.0.113.1/24"
 
 vpp_exec lsr2 "mpls table add 0"
 vpp_exec lsr2 "set interface mpls host-$LSR2_LSR1 enable"
 vpp_exec lsr2 "set interface mpls host-$LSR2_PE2 enable"
 
-# Forward: Swap 200 → 300
+# --- GRE tunnel to PE-SEC (MPLS-over-GRE) ---
+vpp_exec lsr2 "create gre tunnel src 203.0.113.1 dst 203.0.113.2"
+vpp_exec lsr2 "set interface state gre0 up"
+vpp_exec lsr2 "set interface ip address gre0 172.16.0.1/30"
+vpp_exec lsr2 "set interface mpls gre0 enable"
+
+# --- Existing PE1↔PE2 transport labels ---
+# Forward: Swap 100 → 200 (PE1→PE2 path: label 200 at LSR2)
 vpp_exec lsr2 "mpls local-label 200 non-eos via 100.64.4.20 host-$LSR2_PE2 out-labels 300"
-# Return: Swap 400 → 401
+# Return: Swap 400 → 401 (PE2→PE1 path)
 vpp_exec lsr2 "mpls local-label 400 non-eos via 100.64.3.10 host-$LSR2_LSR1 out-labels 401"
+
+# --- PE-SEC transport labels (via GRE tunnel) ---
+# Forward PE1→PE-SEC: swap 250→310, send over GRE
+vpp_exec lsr2 "mpls local-label 250 non-eos via 172.16.0.2 gre0 out-labels 310"
+# Forward PE2→PE-SEC: swap 1300→310, send over GRE
+vpp_exec lsr2 "mpls local-label 1300 non-eos via 172.16.0.2 gre0 out-labels 310"
+# Return PE-SEC→PE1: swap 1400→1401, forward to LSR1
+vpp_exec lsr2 "mpls local-label 1400 non-eos via 100.64.3.10 host-$LSR2_LSR1 out-labels 1401"
+# Return PE-SEC→PE2: swap 1500→1501, forward to PE2
+vpp_exec lsr2 "mpls local-label 1500 non-eos via 100.64.4.20 host-$LSR2_PE2 out-labels 1501"
 
 # IP routes for PE loopback reachability
 vpp_exec lsr2 "ip route add 10.255.0.1/32 via 100.64.3.10"
 vpp_exec lsr2 "ip route add 10.255.0.2/32 via 100.64.4.20"
+vpp_exec lsr2 "ip route add 10.255.0.3/32 via 172.16.0.2 gre0"
 
 # Linux IP addresses and routes for IP transit (PE-PE iBGP uses Linux TCP)
 docker exec -i lsr2 ip addr add 100.64.3.20/24 dev "$LSR2_LSR1" 2>/dev/null || true
@@ -441,6 +498,7 @@ vpp_exec pe2 "set interface ip address loop0 10.255.0.2/32"
 
 # Transport label pop: 300 non-eos → MPLS lookup for VPN label
 vpp_exec pe2 "mpls local-label 300 non-eos via mpls-lookup-in-table 0"
+vpp_exec pe2 "mpls local-label 1501 non-eos via mpls-lookup-in-table 0"
 
 # VPN label disposition (static fallback)
 vpp_exec pe2 "mpls local-label 500 eos via ip4-lookup-in-table 10"
@@ -453,6 +511,9 @@ vpp_exec pe2 "ip route add 100.64.1.0/24 table 10 via 100.64.4.10 host-$PE2_CORE
 vpp_exec pe2 "ip route add 10.1.1.0/24 table 10 via 100.64.4.10 host-$PE2_CORE out-labels 400 600"
 vpp_exec pe2 "ip route add 100.64.6.0/24 table 20 via 100.64.4.10 host-$PE2_CORE out-labels 400 800"
 vpp_exec pe2 "ip route add 100.64.6.0/24 table 30 via 100.64.4.10 host-$PE2_CORE out-labels 400 1000"
+# Remote routes via MPLS to PE-SEC (via LSR2→GRE):
+vpp_exec pe2 "ip route add 100.64.100.0/24 table 10 via 100.64.4.10 host-$PE2_CORE out-labels 1300 1100"
+vpp_exec pe2 "ip route add 10.100.1.0/24 table 10 via 100.64.4.10 host-$PE2_CORE out-labels 1300 1100"
 # Local CE-connected LAN routes (so PE2 can forward decapsulated MPLS traffic to CEs):
 vpp_exec pe2 "ip route add 10.1.2.0/24 table 10 via 100.64.5.20 host-$PE2_CE2"
 
@@ -478,12 +539,97 @@ docker exec -i pe2 ip link set "$PE2_CE6" master VRF30 2>/dev/null || true
 
 # Blackhole routes in Linux VRFs for remote CE LANs (see PE1 notes above)
 docker exec -i pe2 ip route add blackhole 10.1.1.0/24 vrf VRF10 2>/dev/null || true
+docker exec -i pe2 ip route add blackhole 10.100.1.0/24 vrf VRF10 2>/dev/null || true
+docker exec -i pe2 ip route add blackhole 100.64.100.0/24 vrf VRF10 2>/dev/null || true
+
+echo ""
+echo "============================================"
+echo "  Configuring PE-SEC (Security PE via GRE)"
+echo "============================================"
+
+# --- Bring up interfaces ---
+vpp_exec pe-sec "set interface state host-$PESEC_GRE up"
+vpp_exec pe-sec "set interface state host-$PESEC_SEC up"
+# (PESEC_MGMT stays Linux-only for iBGP peering via pe_mgmt bridge)
+
+# --- GRE transport interface ---
+vpp_exec pe-sec "set interface ip address host-$PESEC_GRE 203.0.113.2/24"
+
+# --- GRE tunnel to LSR2 (MPLS-over-GRE) ---
+vpp_exec pe-sec "create gre tunnel src 203.0.113.2 dst 203.0.113.1"
+vpp_exec pe-sec "set interface state gre0 up"
+vpp_exec pe-sec "set interface ip address gre0 172.16.0.2/30"
+
+# --- MPLS setup ---
+vpp_exec pe-sec "mpls table add 0"
+vpp_exec pe-sec "ip table add 10"
+vpp_exec pe-sec "set interface mpls gre0 enable"
+
+# --- VRF 10: FW-facing interface ---
+vpp_exec pe-sec "set interface ip table host-$PESEC_SEC 10"
+vpp_exec pe-sec "set interface ip address host-$PESEC_SEC 100.64.100.1/24"
+
+# --- Loopback for BGP router-id ---
+vpp_exec pe-sec "create loopback interface"
+vpp_exec pe-sec "set interface state loop0 up"
+vpp_exec pe-sec "set interface ip address loop0 10.255.0.3/32"
+
+# --- Transport label processing ---
+# Pop transport label 310 from LSR2, expose VPN label
+vpp_exec pe-sec "mpls local-label 310 non-eos via mpls-lookup-in-table 0"
+
+# --- VPN label disposition ---
+# VPN label 1100 → VRF 10 lookup
+vpp_exec pe-sec "mpls local-label 1100 eos via ip4-lookup-in-table 10"
+
+# --- Forward VRF routes via MPLS-over-GRE ---
+# To PE1 CE networks (VRF 10): push [1400, 600] via GRE
+vpp_exec pe-sec "ip route add 100.64.1.0/24 table 10 via 172.16.0.1 gre0 out-labels 1400 600"
+vpp_exec pe-sec "ip route add 10.1.1.0/24 table 10 via 172.16.0.1 gre0 out-labels 1400 600"
+# To PE2 CE networks (VRF 10): push [1500, 500] via GRE
+vpp_exec pe-sec "ip route add 100.64.5.0/24 table 10 via 172.16.0.1 gre0 out-labels 1500 500"
+vpp_exec pe-sec "ip route add 10.1.2.0/24 table 10 via 172.16.0.1 gre0 out-labels 1500 500"
+# Local CE route: FW's LAN (explicit interface nexthop for VRF)
+vpp_exec pe-sec "ip route add 10.100.1.0/24 table 10 via 100.64.100.20 host-$PESEC_SEC"
+
+# --- Linux interfaces for FRR ---
+docker exec -i pe-sec ip addr add 100.64.100.1/24 dev "$PESEC_SEC" 2>/dev/null || true
+# Mgmt interface already has 10.255.0.3 from Docker — no need to add
+
+# --- Linux VRF for FRR per-VRF BGP ---
+docker exec -i pe-sec ip link add VRF10 type vrf table 10 2>/dev/null || true
+docker exec -i pe-sec ip link set VRF10 up 2>/dev/null || true
+docker exec -i pe-sec ip link set "$PESEC_SEC" master VRF10 2>/dev/null || true
+
+# Blackhole routes for remote CE LANs (prevent Linux ICMP unreachable)
+docker exec -i pe-sec ip route add blackhole 10.1.1.0/24 vrf VRF10 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 10.1.2.0/24 vrf VRF10 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 100.64.1.0/24 vrf VRF10 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 100.64.5.0/24 vrf VRF10 2>/dev/null || true
+
+echo ""
+echo "============================================"
+echo "  Configuring FW (Security Device / CE)"
+echo "============================================"
+
+# PE-SEC facing interface
+vpp_exec fw "set interface state host-$FW_PE up"
+vpp_exec fw "set interface ip address host-$FW_PE 100.64.100.20/24"
+vpp_exec fw "ip route add 0.0.0.0/0 via 100.64.100.1"
+# LAN-side interface (toward sec-host)
+vpp_exec fw "set interface state host-$FW_LAN up"
+vpp_exec fw "set interface ip address host-$FW_LAN 10.100.1.1/24"
+# Linux side for FRR eBGP peering
+docker exec -i fw ip addr add 100.64.100.20/24 dev "$FW_PE" 2>/dev/null || true
+docker exec -i fw ip route add default via 100.64.100.1 2>/dev/null || true
+# Linux side for LAN (so FRR can see connected 10.100.1.0/24)
+docker exec -i fw ip addr add 10.100.1.1/24 dev "$FW_LAN" 2>/dev/null || true
 
 echo ""
 echo "============================================"
 echo "  Starting FRR on all nodes"
 echo "============================================"
-for node in ce1 ce3 ce5 pe1 lsr1 lsr2 pe2 ce2 ce4 ce6; do
+for node in ce1 ce3 ce5 pe1 lsr1 lsr2 pe2 ce2 ce4 ce6 pe-sec fw; do
   echo "  Starting FRR on $node..."
   docker exec -i "$node" /usr/lib/frr/frrinit.sh start 2>/dev/null || true
 done
@@ -502,6 +648,11 @@ echo "  Installing tools on host2..."
 docker exec -i host2 bash -c "apt-get update -qq && apt-get install -y -qq iputils-ping traceroute iproute2 > /dev/null 2>&1" || true
 echo "  Setting default route on host2 (via CE2: 10.1.2.1)..."
 docker exec -i host2 ip route replace default via 10.1.2.1 2>/dev/null || true
+
+echo "  Installing tools on sec-host..."
+docker exec -i sec-host bash -c "apt-get update -qq && apt-get install -y -qq iputils-ping traceroute iproute2 > /dev/null 2>&1" || true
+echo "  Setting default route on sec-host (via FW: 10.100.1.1)..."
+docker exec -i sec-host ip route replace default via 10.100.1.1 2>/dev/null || true
 
 echo ""
 echo "============================================"
@@ -527,6 +678,14 @@ echo "--- PE2 BGP Summary ---"
 docker exec -i pe2 vtysh -c "show bgp summary" 2>/dev/null || echo "  FRR not ready yet"
 
 echo ""
+echo "--- PE-SEC BGP Summary ---"
+docker exec -i pe-sec vtysh -c "show bgp summary" 2>/dev/null || echo "  FRR not ready yet"
+
+echo ""
+echo "--- PE-SEC VRF 10 BGP ---"
+docker exec -i pe-sec vtysh -c "show bgp vrf VRF10 ipv4 unicast" 2>/dev/null || true
+
+echo ""
 echo "--- PE1 VPNv4 Routes ---"
 docker exec -i pe1 vtysh -c "show bgp ipv4 vpn" 2>/dev/null || true
 
@@ -540,12 +699,22 @@ echo "  docker exec -it pe1 vtysh -c 'show bgp summary'"
 echo "  docker exec -it pe1 vtysh -c 'show bgp ipv4 vpn'"
 echo "  docker exec -it pe1 vtysh -c 'show bgp vrf VRF10 ipv4 unicast'"
 echo "  docker exec -it pe2 vtysh -c 'show bgp vrf VRF10 ipv4 unicast'"
+echo "  docker exec -it pe-sec vtysh -c 'show bgp summary'"
+echo "  docker exec -it pe-sec vtysh -c 'show bgp vrf VRF10 ipv4 unicast'"
 echo "  docker exec -it ce1 vppctl ping 100.64.5.20"
 echo "  docker exec -it ce3 vppctl ping 100.64.7.20"
 echo "  docker exec -it ce5 vppctl ping 100.64.7.20"
 echo ""
 echo "End Host tests:"
-echo "  docker exec -it host1 ping -c 3 10.1.2.10    # host1 → host2 (across MPLS core)"
-echo "  docker exec -it host2 ping -c 3 10.1.1.10    # host2 → host1 (across MPLS core)"
-echo "  docker exec -it host1 traceroute 10.1.2.10   # trace path through MPLS"
+echo "  docker exec -it host1 ping -c 3 10.1.2.10     # host1 → host2 (across MPLS core)"
+echo "  docker exec -it host2 ping -c 3 10.1.1.10     # host2 → host1 (across MPLS core)"
+echo "  docker exec -it sec-host ping -c 3 10.1.1.10  # sec-host → host1 (MPLS-over-GRE)"
+echo "  docker exec -it sec-host ping -c 3 10.1.2.10  # sec-host → host2 (MPLS-over-GRE)"
+echo "  docker exec -it host1 ping -c 3 10.100.1.10   # host1 → sec-host (MPLS-over-GRE)"
+echo ""
+echo "GRE tunnel verification:"
+echo "  docker exec -it lsr2 vppctl show gre tunnel"
+echo "  docker exec -it pe-sec vppctl show gre tunnel"
+echo "  docker exec -it pe-sec vppctl show mpls fib"
+echo "  docker exec -it lsr2 vppctl show mpls fib"
 echo "============================================"

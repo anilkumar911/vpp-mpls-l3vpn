@@ -87,6 +87,8 @@ services:
         ipv4_address: 100.64.3.20
       lsr2_pe2:
         ipv4_address: 100.64.4.10
+      gre_transport:
+        ipv4_address: 203.0.113.1
 
   pe2:
     image: vpp-frr:latest
@@ -166,6 +168,47 @@ services:
       customer1_lan2:
         ipv4_address: 10.1.2.10
 
+  # --- Security PE (Remote PE over GRE tunnel) ---
+  pe-sec:
+    image: vpp-frr:latest
+    container_name: pe-sec
+    privileged: true
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./frr-configs/pe-sec.conf:/etc/frr/frr.conf:ro
+    networks:
+      gre_transport:
+        ipv4_address: 203.0.113.2
+      sec_lan:
+        ipv4_address: 100.64.100.1
+      pe_mgmt:
+        ipv4_address: 10.255.0.3
+
+  fw:
+    image: vpp-frr:latest
+    container_name: fw
+    privileged: true
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./frr-configs/fw.conf:/etc/frr/frr.conf:ro
+    networks:
+      sec_lan:
+        ipv4_address: 100.64.100.20
+      sec_host_lan:
+        ipv4_address: 10.100.1.1
+
+  sec-host:
+    image: ubuntu:22.04
+    container_name: sec-host
+    command: sleep infinity
+    cap_add:
+      - NET_ADMIN
+    networks:
+      sec_host_lan:
+        ipv4_address: 10.100.1.10
+
 networks:
   ce1_pe1:
     driver: bridge
@@ -241,3 +284,24 @@ networks:
       config:
         - subnet: 10.255.0.0/24
           gateway: 10.255.0.254
+
+  gre_transport:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 203.0.113.0/24
+          gateway: 203.0.113.254
+
+  sec_lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 100.64.100.0/24
+          gateway: 100.64.100.254
+
+  sec_host_lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.100.1.0/24
+          gateway: 10.100.1.254
