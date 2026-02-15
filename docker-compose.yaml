@@ -27,6 +27,8 @@ services:
     networks:
       ce3_pe1:
         ipv4_address: 100.64.6.20
+      customer2_lan1:
+        ipv4_address: 10.2.1.1
 
   ce5:
     image: vpp-frr:latest
@@ -135,6 +137,8 @@ services:
     networks:
       pe2_ce4:
         ipv4_address: 100.64.7.20
+      customer2_lan2:
+        ipv4_address: 10.2.2.1
 
   ce6:
     image: vpp-frr:latest
@@ -149,9 +153,11 @@ services:
         ipv4_address: 100.64.9.20
 
   host1:
-    image: ubuntu:22.04
+    build:
+      context: .
+      dockerfile: Dockerfile.host
+    image: host-tools:latest
     container_name: host1
-    command: sleep infinity
     cap_add:
       - NET_ADMIN
     networks:
@@ -159,14 +165,40 @@ services:
         ipv4_address: 10.1.1.10
 
   host2:
-    image: ubuntu:22.04
+    build:
+      context: .
+      dockerfile: Dockerfile.host
+    image: host-tools:latest
     container_name: host2
-    command: sleep infinity
     cap_add:
       - NET_ADMIN
     networks:
       customer1_lan2:
         ipv4_address: 10.1.2.10
+
+  host3:
+    build:
+      context: .
+      dockerfile: Dockerfile.host
+    image: host-tools:latest
+    container_name: host3
+    cap_add:
+      - NET_ADMIN
+    networks:
+      customer2_lan1:
+        ipv4_address: 10.2.1.10
+
+  host4:
+    build:
+      context: .
+      dockerfile: Dockerfile.host
+    image: host-tools:latest
+    container_name: host4
+    cap_add:
+      - NET_ADMIN
+    networks:
+      customer2_lan2:
+        ipv4_address: 10.2.2.10
 
   # --- Security PE (Remote PE over GRE tunnel) ---
   pe-sec:
@@ -180,13 +212,26 @@ services:
     networks:
       gre_transport:
         ipv4_address: 203.0.113.2
-      sec_lan:
+      sec_vrf10_in:
         ipv4_address: 100.64.100.1
+      sec_vrf10_out:
+        ipv4_address: 100.64.101.1
+      sec_vrf20_in:
+        ipv4_address: 100.64.102.1
+      sec_vrf20_out:
+        ipv4_address: 100.64.103.1
+      sec_vrf30_in:
+        ipv4_address: 100.64.104.1
+      sec_vrf30_out:
+        ipv4_address: 100.64.105.1
       pe_mgmt:
         ipv4_address: 10.255.0.3
 
   fw:
-    image: vpp-frr:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.fw
+    image: fw-tools:latest
     container_name: fw
     privileged: true
     stdin_open: true
@@ -194,15 +239,27 @@ services:
     volumes:
       - ./frr-configs/fw.conf:/etc/frr/frr.conf:ro
     networks:
-      sec_lan:
+      sec_vrf10_in:
         ipv4_address: 100.64.100.20
+      sec_vrf10_out:
+        ipv4_address: 100.64.101.20
+      sec_vrf20_in:
+        ipv4_address: 100.64.102.20
+      sec_vrf20_out:
+        ipv4_address: 100.64.103.20
+      sec_vrf30_in:
+        ipv4_address: 100.64.104.20
+      sec_vrf30_out:
+        ipv4_address: 100.64.105.20
       sec_host_lan:
         ipv4_address: 10.100.1.1
 
   sec-host:
-    image: ubuntu:22.04
+    build:
+      context: .
+      dockerfile: Dockerfile.host
+    image: host-tools:latest
     container_name: sec-host
-    command: sleep infinity
     cap_add:
       - NET_ADMIN
     networks:
@@ -292,12 +349,61 @@ networks:
         - subnet: 203.0.113.0/24
           gateway: 203.0.113.254
 
-  sec_lan:
+  sec_vrf10_in:
     driver: bridge
     ipam:
       config:
         - subnet: 100.64.100.0/24
           gateway: 100.64.100.254
+
+  sec_vrf10_out:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 100.64.101.0/24
+          gateway: 100.64.101.254
+
+  sec_vrf20_in:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 100.64.102.0/24
+          gateway: 100.64.102.254
+
+  sec_vrf20_out:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 100.64.103.0/24
+          gateway: 100.64.103.254
+
+  sec_vrf30_in:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 100.64.104.0/24
+          gateway: 100.64.104.254
+
+  sec_vrf30_out:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 100.64.105.0/24
+          gateway: 100.64.105.254
+
+  customer2_lan1:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.2.1.0/24
+          gateway: 10.2.1.254
+
+  customer2_lan2:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.2.2.0/24
+          gateway: 10.2.2.254
 
   sec_host_lan:
     driver: bridge

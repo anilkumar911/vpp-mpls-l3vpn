@@ -1,0 +1,11 @@
+FROM vpp-frr:latest
+
+# Networking tools for packet examination on FW
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends \
+        tcpdump \
+        netcat-openbsd \
+        curl \
+        net-tools \
+        iperf3 \
+    && rm -rf /var/lib/apt/lists/*

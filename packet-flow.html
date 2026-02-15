@@ -1,0 +1,1444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MPLS L3VPN Inline FW — Packet Flow Visualization</title>
+<style>
+  :root {
+    --bg: #0f172a; --card: #1e293b; --border: #334155;
+    --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8;
+    --green: #4ade80; --orange: #fb923c; --red: #f87171;
+    --purple: #a78bfa; --cyan: #22d3ee; --yellow: #fbbf24; --pink: #f472b6;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Segoe UI',system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; overflow-x:hidden; }
+
+  .header { text-align:center; padding:20px 16px 6px; border-bottom:1px solid var(--border); }
+  .header h1 { font-size:1.5rem; color:var(--accent); font-weight:600; }
+  .header p { color:var(--muted); font-size:0.82rem; margin-top:4px; }
+
+  /* VRF Selector */
+  .vrf-selector { display:flex; justify-content:center; gap:8px; padding:14px 16px 4px; }
+  .vrf-btn {
+    padding:8px 22px; border:2px solid var(--border); border-radius:10px;
+    background:var(--card); color:var(--muted); cursor:pointer; font-size:0.82rem;
+    transition:all 0.2s; font-weight:500;
+  }
+  .vrf-btn:hover { border-color:var(--accent); color:var(--text); }
+  .vrf-btn.active-10 { background:rgba(56,189,248,0.15); border-color:var(--accent); color:var(--accent); font-weight:700; }
+  .vrf-btn.active-20 { background:rgba(244,114,182,0.15); border-color:var(--pink); color:var(--pink); font-weight:700; }
+  .vrf-badge { font-size:0.65rem; padding:1px 6px; border-radius:6px; margin-left:6px; vertical-align:middle; }
+
+  .controls { display:flex; justify-content:center; gap:10px; padding:10px 16px; flex-wrap:wrap; }
+  .btn {
+    padding:7px 18px; border:1px solid var(--border); border-radius:8px;
+    background:var(--card); color:var(--text); cursor:pointer; font-size:0.82rem; transition:all 0.2s;
+  }
+  .btn:hover { border-color:var(--accent); color:var(--accent); }
+  .btn.active { background:var(--accent); color:var(--bg); border-color:var(--accent); font-weight:600; }
+  .btn-nav {
+    padding:7px 14px; border:1px solid var(--accent); border-radius:8px;
+    background:transparent; color:var(--accent); cursor:pointer; font-size:0.82rem; transition:all 0.2s;
+  }
+  .btn-nav:hover { background:var(--accent); color:var(--bg); }
+  .btn-nav:disabled { opacity:0.3; cursor:default; }
+
+  .step-indicator { text-align:center; padding:0 16px 6px; color:var(--muted); font-size:0.78rem; }
+
+  .topology-container { padding:6px 16px; overflow-x:auto; }
+  svg { display:block; margin:0 auto; }
+  .node { cursor:pointer; }
+  .node rect { stroke-width:2; rx:8; transition:all 0.3s; }
+  .node text { font-family:'Segoe UI',system-ui,sans-serif; fill:var(--text); font-size:12px; text-anchor:middle; dominant-baseline:central; pointer-events:none; }
+  .node .label { font-weight:600; font-size:13px; }
+  .node .sublabel { font-size:10px; fill:var(--muted); }
+  .link line { stroke:var(--border); stroke-width:2; transition:all 0.3s; }
+  .link.active line { stroke:var(--accent); stroke-width:3; }
+  .link.active-20 line { stroke:var(--pink); stroke-width:3; }
+  .packet-dot { r:7; fill:var(--accent); filter:drop-shadow(0 0 6px rgba(56,189,248,0.6)); display:none; }
+  .packet-dot.visible { display:block; }
+  .node.active rect { stroke-width:3; filter:drop-shadow(0 0 10px rgba(56,189,248,0.4)); }
+  .node.active-fw rect { stroke-width:3; filter:drop-shadow(0 0 10px rgba(251,146,60,0.5)); }
+  .node.active-20 rect { stroke-width:3; filter:drop-shadow(0 0 10px rgba(244,114,182,0.4)); }
+
+  .detail-panel { margin:0 16px 16px; background:var(--card); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .detail-header { padding:12px 16px; background:rgba(56,189,248,0.1); border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+  .detail-header.vrf20 { background:rgba(244,114,182,0.1); }
+  .detail-header h3 { font-size:0.95rem; color:var(--accent); }
+  .detail-header.vrf20 h3 { color:var(--pink); }
+  .detail-header .hop-badge { background:var(--accent); color:var(--bg); padding:2px 10px; border-radius:12px; font-size:0.75rem; font-weight:600; }
+  .detail-header.vrf20 .hop-badge { background:var(--pink); }
+  .detail-body { padding:16px; }
+
+  .wire-title { font-size:0.75rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:8px; display:flex; align-items:center; gap:8px; }
+  .wire-title::after { content:''; flex:1; height:1px; background:var(--border); }
+  .wire-container { display:flex; align-items:stretch; gap:0; margin-bottom:16px; overflow-x:auto; padding-bottom:4px; border-radius:8px; border:1px solid var(--border); background:rgba(0,0,0,0.25); }
+  .wire-layer { display:flex; flex-direction:column; min-width:100px; border-right:1px solid var(--border); position:relative; }
+  .wire-layer:last-child { border-right:none; }
+  .wire-layer.changed { box-shadow:inset 0 -3px 0 var(--orange); }
+  .wire-layer.stripped { opacity:0.35; background:repeating-linear-gradient(45deg,transparent,transparent 4px,rgba(255,255,255,0.03) 4px,rgba(255,255,255,0.03) 8px); }
+  .wire-layer.added { box-shadow:inset 0 -3px 0 var(--green); }
+  .wire-layer-hdr { padding:6px 10px; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; border-bottom:1px solid var(--border); white-space:nowrap; }
+  .wire-layer-body { padding:6px 10px; font-family:'Cascadia Code','Fira Code','JetBrains Mono',monospace; font-size:0.72rem; line-height:1.7; flex:1; display:flex; flex-direction:column; justify-content:center; }
+  .wire-field { white-space:nowrap; }
+  .wire-field .wk { color:var(--muted); }
+  .wire-field .wv { color:var(--text); }
+  .wire-field .wv.changed { color:var(--orange); font-weight:600; }
+  .wire-field .wv.hi { color:var(--accent); font-weight:600; }
+
+  .wire-layer.l-eth .wire-layer-hdr       { background:rgba(100,116,139,0.25); color:#94a3b8; }
+  .wire-layer.l-gre-ip .wire-layer-hdr    { background:rgba(251,191,36,0.18); color:var(--yellow); }
+  .wire-layer.l-gre .wire-layer-hdr       { background:rgba(251,191,36,0.12); color:var(--yellow); }
+  .wire-layer.l-mpls-t .wire-layer-hdr    { background:rgba(167,139,250,0.22); color:var(--purple); }
+  .wire-layer.l-mpls-v .wire-layer-hdr    { background:rgba(74,222,128,0.18); color:var(--green); }
+  .wire-layer.l-ip .wire-layer-hdr        { background:rgba(56,189,248,0.15); color:var(--accent); }
+  .wire-layer.l-icmp .wire-layer-hdr      { background:rgba(34,211,238,0.15); color:var(--cyan); }
+  .wire-layer.l-fw .wire-layer-hdr        { background:rgba(251,146,60,0.2); color:var(--orange); }
+
+  .mpls-hdr-table { display:grid; grid-template-columns:auto auto auto auto; gap:2px 8px; font-size:0.68rem; }
+  .mpls-hdr-table .mh { color:var(--muted); font-weight:600; text-align:center; border-bottom:1px solid var(--border); padding-bottom:1px; }
+  .mpls-hdr-table .mv { text-align:center; padding-top:1px; }
+
+  .action-desc { margin-top:8px; padding:8px 12px; background:rgba(56,189,248,0.05); border-left:3px solid var(--accent); border-radius:0 6px 6px 0; font-size:0.82rem; color:var(--muted); line-height:1.5; }
+  .action-desc strong { color:var(--text); }
+  .action-desc.vrf20 { border-left-color:var(--pink); background:rgba(244,114,182,0.05); }
+  .pkt-section { background:rgba(0,0,0,0.2); border-radius:8px; padding:12px; }
+  .pkt-section h4 { font-size:0.8rem; color:var(--muted); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.05em; }
+
+  .compare-note {
+    margin-top:10px; padding:6px 10px; font-size:0.75rem; border-radius:6px;
+    background:rgba(244,114,182,0.06); border:1px dashed rgba(244,114,182,0.3); color:var(--muted); line-height:1.5;
+  }
+  .compare-note strong { color:var(--pink); }
+
+  .trace-section { margin:0 16px 16px; background:var(--card); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .trace-header { padding:12px 16px; border-bottom:1px solid var(--border); cursor:pointer; display:flex; justify-content:space-between; align-items:center; }
+  .trace-header h3 { font-size:0.9rem; color:var(--cyan); }
+  .trace-header .toggle { color:var(--muted); transition:transform 0.2s; }
+  .trace-header .toggle.open { transform:rotate(180deg); }
+  .trace-body { padding:16px; display:none; font-family:'Cascadia Code','Fira Code',monospace; font-size:0.75rem; line-height:1.6; white-space:pre-wrap; color:var(--muted); max-height:400px; overflow-y:auto; }
+  .trace-body.open { display:block; }
+  .trace-body .highlight { color:var(--accent); font-weight:600; }
+  .trace-body .ttl-hl { color:var(--orange); font-weight:600; }
+  .trace-body .action-hl { color:var(--green); }
+
+  .legend { display:flex; gap:14px; justify-content:center; padding:6px 16px; flex-wrap:wrap; }
+  .legend-item { display:flex; align-items:center; gap:5px; font-size:0.72rem; color:var(--muted); }
+  .legend-swatch { width:13px; height:13px; border-radius:3px; }
+
+  .correlation-table { width:100%; border-collapse:collapse; font-size:0.8rem; margin-top:8px; }
+  .correlation-table th { background:rgba(56,189,248,0.1); color:var(--accent); padding:8px; text-align:left; font-weight:600; border-bottom:1px solid var(--border); }
+  .correlation-table td { padding:6px 8px; border-bottom:1px solid rgba(51,65,85,0.5); font-family:'Cascadia Code','Fira Code',monospace; font-size:0.75rem; }
+  .correlation-table tr:hover td { background:rgba(56,189,248,0.05); }
+  .match { color:var(--green); }
+  .diff { color:var(--orange); }
+  .wire-legend { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:10px; font-size:0.7rem; color:var(--muted); }
+  .wire-legend span { display:flex; align-items:center; gap:4px; }
+  .wire-legend .ws { width:10px; height:10px; border-radius:2px; display:inline-block; }
+
+  /* Interface labels on topology links */
+  .iface-label { font-size:8px; fill:var(--muted); font-family:'Cascadia Code','Fira Code',monospace; pointer-events:none; opacity:0.85; }
+  .iface-label.vrf10 { fill:var(--accent); opacity:0.7; }
+  .iface-label.vrf20 { fill:var(--pink); opacity:0.7; }
+
+  /* Clickable info icon on nodes */
+  .info-icon { cursor:pointer; opacity:0.6; transition:opacity 0.2s; }
+  .info-icon:hover { opacity:1; }
+  .info-icon circle { fill:var(--card); stroke:var(--cyan); stroke-width:1.5; }
+  .info-icon text { fill:var(--cyan); font-size:10px; font-weight:700; font-family:sans-serif; text-anchor:middle; dominant-baseline:central; pointer-events:none; }
+
+  /* Route popup overlay */
+  #routePopup {
+    display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+    background:rgba(0,0,0,0.6); z-index:1000; justify-content:center; align-items:center;
+  }
+  #routePopup.open { display:flex; }
+  .route-popup-inner {
+    background:var(--card); border:1px solid var(--border); border-radius:14px;
+    max-width:700px; width:90%; max-height:80vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.5);
+  }
+  .route-popup-hdr {
+    padding:14px 18px; background:rgba(34,211,238,0.1); border-bottom:1px solid var(--border);
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .route-popup-hdr h3 { color:var(--cyan); font-size:0.95rem; }
+  .route-popup-close { background:none; border:1px solid var(--border); border-radius:6px; color:var(--muted); padding:4px 10px; cursor:pointer; font-size:0.8rem; }
+  .route-popup-close:hover { border-color:var(--red); color:var(--red); }
+  .route-popup-body {
+    padding:16px 18px; font-family:'Cascadia Code','Fira Code',monospace; font-size:0.73rem;
+    line-height:1.65; white-space:pre-wrap; color:var(--muted);
+  }
+  .route-popup-body .rp-section { margin-bottom:14px; }
+  .route-popup-body .rp-title { color:var(--cyan); font-weight:700; font-size:0.78rem; margin-bottom:4px; font-family:sans-serif; }
+  .route-popup-body .rp-hl { color:var(--accent); font-weight:600; }
+  .route-popup-body .rp-lbl { color:var(--purple); font-weight:600; }
+  .route-popup-body .rp-vpn { color:var(--green); font-weight:600; }
+  .route-popup-body .rp-gre { color:var(--yellow); font-weight:600; }
+  .route-popup-body .rp-fw { color:var(--orange); font-weight:600; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>MPLS L3VPN — Inline Firewall Packet Flow</h1>
+  <p>Compare VRF 10 (host1 ↔ host2) and VRF 20 (CE3 ↔ CE4) — same MPLS core, same FW, different VPN labels</p>
+</div>
+
+<div class="vrf-selector">
+  <button class="vrf-btn active-10" onclick="setVRF(10)">
+    🔵 VRF 10 <span style="font-size:0.72rem;color:var(--muted)">(host1 ↔ host2)</span>
+  </button>
+  <button class="vrf-btn" onclick="setVRF(20)">
+    🩷 VRF 20 <span style="font-size:0.72rem;color:var(--muted)">(CE3 ↔ CE4)</span>
+  </button>
+</div>
+
+<div class="controls">
+  <button class="btn active" id="fwdBtn" onclick="setDir('fwd')">→ Forward</button>
+  <button class="btn" id="retBtn" onclick="setDir('ret')">← Return</button>
+  <span style="color:var(--border)">│</span>
+  <button class="btn-nav" id="prevBtn" onclick="prevStep()" disabled>◀ Prev</button>
+  <button class="btn-nav" onclick="autoPlay()">▶ Auto</button>
+  <button class="btn-nav" id="nextBtn" onclick="nextStep()">Next ▶</button>
+</div>
+
+<div class="step-indicator" id="stepIndicator">Step 1 — Click nodes or use Next/Prev</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-swatch" style="background:rgba(100,116,139,0.4)"></div>Ethernet</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:rgba(251,191,36,0.4)"></div>GRE</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:rgba(162,139,250,0.4)"></div>MPLS Transport</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:rgba(74,222,128,0.4)"></div>MPLS VPN</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:rgba(56,189,248,0.4)"></div>IPv4</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:rgba(34,211,238,0.4)"></div>ICMP</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:rgba(251,146,60,0.4)"></div>FW</div>
+</div>
+
+<div class="topology-container">
+<svg id="topology" width="1100" height="440" viewBox="-5 0 1110 440">
+  <defs>
+    <filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+
+  <!-- VRF labels -->
+  <text x="60" y="30" font-size="11" fill="var(--pink)" font-family="sans-serif" font-weight="600" opacity="0.7">VRF 20</text>
+  <text x="60" y="160" font-size="11" fill="var(--accent)" font-family="sans-serif" font-weight="600" opacity="0.7">VRF 10</text>
+
+  <g class="links">
+    <!-- VRF 10 horizontal links -->
+    <g class="link" id="link-host1-ce1"><line x1="100" y1="210" x2="140" y2="210"/></g>
+    <g class="link" id="link-ce1-pe1"><line x1="230" y1="210" x2="270" y2="210"/></g>
+    <g class="link" id="link-pe1-lsr1"><line x1="370" y1="210" x2="400" y2="210"/></g>
+    <g class="link" id="link-lsr1-lsr2"><line x1="490" y1="210" x2="530" y2="210"/></g>
+    <g class="link" id="link-lsr2-pe2"><line x1="620" y1="210" x2="660" y2="210"/></g>
+    <g class="link" id="link-pe2-ce2"><line x1="760" y1="210" x2="800" y2="210"/></g>
+    <g class="link" id="link-ce2-host2"><line x1="890" y1="210" x2="940" y2="210"/></g>
+    <!-- VRF 20 horizontal links -->
+    <g class="link" id="link-host3-ce3"><line x1="100" y1="80" x2="140" y2="80"/></g>
+    <g class="link" id="link-ce4-host4"><line x1="890" y1="80" x2="940" y2="80"/></g>
+    <!-- VRF 20 diagonal links -->
+    <g class="link" id="link-ce3-pe1"><line x1="210" y1="95" x2="290" y2="185" stroke-dasharray="5,3"/></g>
+    <g class="link" id="link-pe2-ce4"><line x1="740" y1="185" x2="820" y2="95" stroke-dasharray="5,3"/></g>
+    <!-- PE-SEC / FW links -->
+    <g class="link" id="link-lsr2-pesec"><line x1="575" y1="235" x2="575" y2="340" stroke-dasharray="6,4"/></g>
+    <g class="link" id="link-pesec-fw"><line x1="520" y1="358" x2="450" y2="358"/></g>
+    <g class="link" id="link-fw-pesec"><line x1="450" y1="372" x2="520" y2="372"/></g>
+  </g>
+
+  <!-- ═══ Interface labels on links ═══ -->
+  <g id="iface-labels-vrf10" class="iface-labels">
+    <!-- host1—CE1 -->
+    <text x="105" y="202" class="iface-label vrf10">eth0</text>
+    <text x="123" y="202" class="iface-label vrf10">eth1</text>
+    <!-- CE1—PE1 -->
+    <text x="233" y="202" class="iface-label vrf10">eth0</text>
+    <text x="255" y="202" class="iface-label vrf10">eth1</text>
+    <!-- PE1—LSR1 -->
+    <text x="372" y="202" class="iface-label vrf10">eth4</text>
+    <text x="393" y="202" class="iface-label vrf10">eth1</text>
+    <!-- LSR1—LSR2 -->
+    <text x="492" y="202" class="iface-label vrf10">eth0</text>
+    <text x="518" y="202" class="iface-label vrf10">eth1</text>
+    <!-- LSR2—PE2 -->
+    <text x="622" y="202" class="iface-label vrf10">eth2</text>
+    <text x="648" y="202" class="iface-label vrf10">eth2</text>
+    <!-- PE2—CE2 -->
+    <text x="762" y="202" class="iface-label vrf10">eth3</text>
+    <text x="790" y="202" class="iface-label vrf10">eth0</text>
+    <!-- CE2—host2 -->
+    <text x="893" y="202" class="iface-label vrf10">eth1</text>
+    <text x="930" y="202" class="iface-label vrf10">eth0</text>
+  </g>
+  <g id="iface-labels-vrf20" class="iface-labels">
+    <!-- host3—CE3 -->
+    <text x="105" y="72" class="iface-label vrf20">eth0</text>
+    <text x="130" y="72" class="iface-label vrf20">eth0</text>
+    <!-- CE3—PE1 (diagonal) -->
+    <text x="205" y="90" class="iface-label vrf20">eth1</text>
+    <text x="280" y="183" class="iface-label vrf20">eth2</text>
+    <!-- PE2—CE4 (diagonal) -->
+    <text x="745" y="183" class="iface-label vrf20">eth4</text>
+    <text x="815" y="90" class="iface-label vrf20">eth1</text>
+    <!-- CE4—host4 -->
+    <text x="893" y="72" class="iface-label vrf20">eth0</text>
+    <text x="930" y="72" class="iface-label vrf20">eth0</text>
+  </g>
+  <g id="iface-labels-service">
+    <!-- LSR2—PE-SEC (GRE tunnel, vertical) -->
+    <text x="580" y="260" class="iface-label" style="fill:var(--yellow);opacity:0.7">gre0</text>
+    <text x="580" y="333" class="iface-label" style="fill:var(--yellow);opacity:0.7">gre0</text>
+    <!-- PE-SEC → FW (ingress: PE-SEC sends to FW for inspection) -->
+    <text x="500" y="353" class="iface-label" style="fill:var(--accent);opacity:0.75">eth4</text>
+    <text x="453" y="353" class="iface-label" style="fill:var(--accent);opacity:0.75">eth1</text>
+    <text x="468" y="349" class="iface-label" style="fill:var(--muted);font-size:7px;opacity:0.6">▸ ingress</text>
+    <!-- FW → PE-SEC (egress: FW sends inspected traffic back) -->
+    <text x="453" y="382" class="iface-label" style="fill:var(--green);opacity:0.75">eth2</text>
+    <text x="500" y="382" class="iface-label" style="fill:var(--green);opacity:0.75">eth5</text>
+    <text x="468" y="388" class="iface-label" style="fill:var(--muted);font-size:7px;opacity:0.6">▸ egress</text>
+    <!-- VRF 20 labels (smaller, below) -->
+    <text x="517" y="353" class="iface-label vrf20" style="font-size:7px">/6</text>
+    <text x="440" y="353" class="iface-label vrf20" style="font-size:7px">/3</text>
+    <text x="440" y="382" class="iface-label vrf20" style="font-size:7px">/4</text>
+    <text x="517" y="382" class="iface-label vrf20" style="font-size:7px">/7</text>
+  </g>
+
+  <!-- VRF 20 nodes (top row) -->
+  <g class="node" id="node-host3" onclick="goToNode('node-host3')">
+    <rect x="10" y="55" width="90" height="50" fill="var(--card)" stroke="var(--pink)" stroke-dasharray="4,3"/>
+    <text x="55" y="75" class="label" style="fill:var(--pink)">host3</text>
+    <text x="55" y="93" class="sublabel">(behind CE3)</text>
+  </g>
+  <g class="info-icon" onclick="event.stopPropagation();showRoutes('host3')"><circle cx="92" cy="62" r="8"/><text x="92" y="62">i</text></g>
+  <g class="node" id="node-ce3" onclick="goToNode('node-ce3')">
+    <rect x="140" y="55" width="90" height="50" fill="var(--card)" stroke="var(--pink)"/>
+    <text x="185" y="75" class="label">CE3</text>
+    <text x="185" y="93" class="sublabel">100.64.6.20</text>
+  </g>
+  <g class="info-icon" onclick="event.stopPropagation();showRoutes('ce3')"><circle cx="222" cy="62" r="8"/><text x="222" y="62">i</text></g>
+  <g class="node" id="node-ce4" onclick="goToNode('node-ce4')">
+    <rect x="800" y="55" width="90" height="50" fill="var(--card)" stroke="var(--pink)"/>
+    <text x="845" y="75" class="label">CE4</text>
+    <text x="845" y="93" class="sublabel">100.64.7.20</text>
+  </g>
+  <g class="info-icon" onclick="event.stopPropagation();showRoutes('ce4')"><circle cx="882" cy="62" r="8"/><text x="882" y="62">i</text></g>
+  <g class="node" id="node-host4" onclick="goToNode('node-host4')">
+    <rect x="940" y="55" width="90" height="50" fill="var(--card)" stroke="var(--pink)" stroke-dasharray="4,3"/>
+    <text x="985" y="75" class="label" style="fill:var(--pink)">host4</text>
+    <text x="985" y="93" class="sublabel">(behind CE4)</text>
+  </g>
+  <g class="info-icon" onclick="event.stopPropagation();showRoutes('host4')"><circle cx="1022" cy="62" r="8"/><text x="1022" y="62">i</text></g>
+
+  <!-- VRF 10 / backbone nodes (middle row) -->
+  <g class="node" id="node-host1" onclick="goToNode('node-host1')">
+    <rect x="10" y="185" width="90" height="50" fill="var(--card)" stroke="var(--accent)"/>
+    <text x="55" y="205" class="label">host1</text>
+    <text x="55" y="223" class="sublabel">10.1.1.10</text>
+  </g>
+  <g class="info-icon" onclick="event.stopPropagation();showRoutes('host1')"><circle cx="92" cy="192" r="8"/><text x="92" y="192">i</text></g>
+  <g class="node" id="node-ce1" onclick="goToNode('node-ce1')">
+    <rect x="140" y="185" width="90" height="50" fill="var(--card)" stroke="#64748b"/>
+    <text x="185" y="205" class="label">CE1</text>
+    <text x="185" y="223" class="sublabel">VRF 10</text>
+  </g>
+  <g class="info-icon" onclick="event.stopPropagation();showRoutes('ce1')"><circle cx="222" cy="192" r="8"/><text x="222" y="192">i</text></g>
+  <g class="node" id="node-pe1" onclick="goToNode('node-pe1')">
+    <rect x="270" y="185" width="100" height="50" fill="var(--card)" stroke="var(--purple)"/>
+    <text x="320" y="205" class="label">PE1</text>
+    <text x="320" y="223" class="sublabel">AS 65000</text>
+  </g>
+  <g class="info-icon" onclick="event.stopPropagation();showRoutes('pe1')"><circle cx="362" cy="192" r="8"/><text x="362" y="192">i</text></g>
+  <g class="node" id="node-lsr1" onclick="goToNode('node-lsr1')">
+    <rect x="400" y="185" width="90" height="50" fill="var(--card)" stroke="var(--purple)"/>
+    <text x="445" y="205" class="label">LSR1</text>
+    <text x="445" y="223" class="sublabel">P router</text>
+  </g>
+  <g class="info-icon" onclick="event.stopPropagation();showRoutes('lsr1')"><circle cx="482" cy="192" r="8"/><text x="482" y="192">i</text></g>
+  <g class="node" id="node-lsr2" onclick="goToNode('node-lsr2')">
+    <rect x="530" y="185" width="90" height="50" fill="var(--card)" stroke="var(--purple)"/>
+    <text x="575" y="205" class="label">LSR2</text>
+    <text x="575" y="223" class="sublabel">GRE endpoint</text>
+  </g>
+  <g class="info-icon" onclick="event.stopPropagation();showRoutes('lsr2')"><circle cx="612" cy="192" r="8"/><text x="612" y="192">i</text></g>
+  <g class="node" id="node-pe2" onclick="goToNode('node-pe2')">
+    <rect x="660" y="185" width="100" height="50" fill="var(--card)" stroke="var(--purple)"/>
+    <text x="710" y="205" class="label">PE2</text>
+    <text x="710" y="223" class="sublabel">AS 65000</text>
+  </g>
+  <g class="info-icon" onclick="event.stopPropagation();showRoutes('pe2')"><circle cx="752" cy="192" r="8"/><text x="752" y="192">i</text></g>
+  <g class="node" id="node-ce2" onclick="goToNode('node-ce2')">
+    <rect x="800" y="185" width="90" height="50" fill="var(--card)" stroke="#64748b"/>
+    <text x="845" y="205" class="label">CE2</text>
+    <text x="845" y="223" class="sublabel">VRF 10</text>
+  </g>
+  <g class="info-icon" onclick="event.stopPropagation();showRoutes('ce2')"><circle cx="882" cy="192" r="8"/><text x="882" y="192">i</text></g>
+  <g class="node" id="node-host2" onclick="goToNode('node-host2')">
+    <rect x="940" y="185" width="90" height="50" fill="var(--card)" stroke="var(--accent)"/>
+    <text x="985" y="205" class="label">host2</text>
+    <text x="985" y="223" class="sublabel">10.1.2.10</text>
+  </g>
+  <g class="info-icon" onclick="event.stopPropagation();showRoutes('host2')"><circle cx="1022" cy="192" r="8"/><text x="1022" y="192">i</text></g>
+
+  <!-- Service chain (bottom) -->
+  <g class="node" id="node-pesec" onclick="goToNode('node-pesec')">
+    <rect x="510" y="330" width="130" height="60" fill="var(--card)" stroke="var(--yellow)"/>
+    <text x="575" y="353" class="label">PE-SEC</text>
+    <text x="575" y="371" class="sublabel">VRF split + GRE</text>
+    <text x="575" y="385" class="sublabel" style="font-size:9px">inline FW</text>
+  </g>
+  <g class="info-icon" onclick="event.stopPropagation();showRoutes('pe-sec')"><circle cx="632" cy="337" r="8"/><text x="632" y="337">i</text></g>
+  <g class="node" id="node-fw" onclick="goToNode('node-fw')">
+    <rect x="350" y="340" width="110" height="50" fill="var(--card)" stroke="var(--orange)"/>
+    <text x="405" y="358" class="label" style="fill:var(--orange)">🔥 FW</text>
+    <text x="405" y="376" class="sublabel">AS 65010</text>
+  </g>
+  <g class="info-icon" onclick="event.stopPropagation();showRoutes('fw')"><circle cx="452" cy="347" r="8"/><text x="452" y="347">i</text></g>
+
+  <text x="593" y="300" font-size="9" fill="var(--yellow)" font-family="sans-serif">GRE tunnel</text>
+  <circle class="packet-dot" id="packetDot" cx="55" cy="210"/>
+</svg>
+</div>
+
+<div class="detail-panel" id="detailPanel">
+  <div class="detail-header" id="detailHeader">
+    <h3 id="detailTitle">Select a step to see packet details</h3>
+    <span class="hop-badge" id="hopBadge">Step 1</span>
+  </div>
+  <div class="detail-body" id="detailBody"></div>
+</div>
+
+<!-- Trace Correlation (VRF 10) -->
+<div class="trace-section" id="traceCorrelation">
+  <div class="trace-header" onclick="toggleTrace('correlation')">
+    <h3>📊 VRF 10 Trace Correlation — FW vs CE2</h3>
+    <span class="toggle" id="toggle-correlation">▼</span>
+  </div>
+  <div class="trace-body" id="body-correlation">
+<strong style="color:var(--accent)">Same packet confirmed by matching fragment ID (0xcaa4) and ICMP ID (14)</strong>
+
+<table class="correlation-table">
+<tr><th>Field</th><th>FW ingress</th><th>FW egress</th><th>CE2 ingress</th><th>CE2 egress</th></tr>
+<tr><td>Src IP</td><td class="match">10.1.1.10</td><td class="match">10.1.1.10</td><td class="match">10.1.1.10</td><td class="match">10.1.1.10</td></tr>
+<tr><td>Dst IP</td><td class="match">10.1.2.10</td><td class="match">10.1.2.10</td><td class="match">10.1.2.10</td><td class="match">10.1.2.10</td></tr>
+<tr><td>TTL</td><td class="diff">61</td><td class="diff">60</td><td class="diff">58</td><td class="diff">57</td></tr>
+<tr><td>Fragment ID</td><td class="match">0xcaa4</td><td class="match">0xcaa4</td><td class="match">0xcaa4</td><td class="match">0xcaa4</td></tr>
+<tr><td>ICMP Type</td><td class="match">echo_request</td><td class="match">echo_request</td><td class="match">echo_request</td><td class="match">echo_request</td></tr>
+<tr><td>ICMP ID</td><td class="match">14</td><td class="match">14</td><td class="match">14</td><td class="match">14</td></tr>
+</table>
+
+<strong style="color:var(--orange);display:block;margin-top:12px">TTL Analysis (VRF 10 forward):</strong>
+  host1(64) → CE1(63) → PE1(62) → <span style="color:var(--purple)">[MPLS]</span> → PE-SEC(61) → <span style="color:var(--orange)">FW(60)</span> → PE-SEC(59) → <span style="color:var(--purple)">[MPLS]</span> → PE2(58) → CE2(57) → host2
+  7 IP decrements ⇒ TTL 64→57 ✓
+
+<strong style="color:var(--pink);display:block;margin-top:8px">TTL Analysis (VRF 20 forward):</strong>
+  CE3(64) → PE1(63) → <span style="color:var(--purple)">[MPLS]</span> → PE-SEC(62) → <span style="color:var(--orange)">FW(61)</span> → PE-SEC(60) → <span style="color:var(--purple)">[MPLS]</span> → PE2(59) → CE4
+  5 IP decrements ⇒ TTL 64→59 (2 fewer hops: no host→CE and CE→host segments)
+  </div>
+</div>
+
+<!-- FW Raw Trace (VRF 10) -->
+<div class="trace-section">
+  <div class="trace-header" onclick="toggleTrace('fw-raw')">
+    <h3>🔥 VRF 10 FW Raw VPP Trace</h3>
+    <span class="toggle" id="toggle-fw-raw">▼</span>
+  </div>
+  <div class="trace-body" id="body-fw-raw">
+<span class="action-hl">af-packet-input</span> af_packet: hw_if_index 3 next-index 4
+<span class="action-hl">ethernet-input</span> IP4: <span class="highlight">9e:c1:...:4f → 2e:46:...:fc</span>
+<span class="action-hl">ip4-input</span> ICMP: <span class="highlight">10.1.1.10 → 10.1.2.10</span>
+    <span class="ttl-hl">ttl 61</span>, fragment id <span class="highlight">0xcaa4</span>, ICMP echo_request id 14
+<span class="action-hl">ip4-lookup</span> <span class="highlight">fib 1</span> (VRF 10)
+<span class="action-hl">ip4-rewrite</span> via <span class="highlight">100.64.101.1 host-eth3</span>  <span class="ttl-hl">TTL 61→60</span>
+<span class="action-hl">host-eth3-tx</span> → PE-SEC VRF11
+  </div>
+</div>
+
+<!-- CE2 Raw Trace (VRF 10) -->
+<div class="trace-section">
+  <div class="trace-header" onclick="toggleTrace('ce2-raw')">
+    <h3>📡 VRF 10 CE2 Raw VPP Trace</h3>
+    <span class="toggle" id="toggle-ce2-raw">▼</span>
+  </div>
+  <div class="trace-body" id="body-ce2-raw">
+<span class="action-hl">af-packet-input</span> af_packet: hw_if_index 2 next-index 4
+<span class="action-hl">ethernet-input</span> IP4: <span class="highlight">4e:dd:...:3a → da:95:...:06</span>
+<span class="action-hl">ip4-input</span> ICMP: <span class="highlight">10.1.1.10 → 10.1.2.10</span>
+    <span class="ttl-hl">ttl 58</span>, fragment id <span class="highlight">0xcaa4</span>, ICMP echo_request id 14
+<span class="action-hl">ip4-lookup</span> <span class="highlight">fib 0</span>
+<span class="action-hl">ip4-rewrite</span> via <span class="highlight">10.1.2.10 host-eth0</span>  <span class="ttl-hl">TTL 58→57</span>
+<span class="action-hl">host-eth0-tx</span> → host2
+  </div>
+</div>
+
+<!-- VRF Label Comparison -->
+<div class="trace-section">
+  <div class="trace-header" onclick="toggleTrace('label-cmp')">
+    <h3>🏷️ VRF Label Comparison — VRF 10 vs VRF 20</h3>
+    <span class="toggle" id="toggle-label-cmp">▼</span>
+  </div>
+  <div class="trace-body" id="body-label-cmp">
+<table class="correlation-table">
+<tr><th>Hop</th><th>VRF 10 Labels</th><th>VRF 20 Labels</th><th>Same?</th></tr>
+<tr><td>PE1 → LSR1 (transport)</td><td class="match">150</td><td class="match">150</td><td class="match">✓ Same</td></tr>
+<tr><td>PE1 → PE-SEC (VPN)</td><td class="diff">1100</td><td class="diff">1200</td><td class="diff">✗ Different</td></tr>
+<tr><td>LSR1 swap</td><td class="match">150→250</td><td class="match">150→250</td><td class="match">✓ Same</td></tr>
+<tr><td>LSR2 swap+GRE</td><td class="match">250→310</td><td class="match">250→310</td><td class="match">✓ Same</td></tr>
+<tr><td>PE-SEC deag</td><td class="match">310</td><td class="match">310</td><td class="match">✓ Same</td></tr>
+<tr><td>PE-SEC VPN disp</td><td class="diff">1100 → VRF 10</td><td class="diff">1200 → VRF 20</td><td class="diff">✗ Key diff</td></tr>
+<tr><td>FW VRF</td><td class="diff">VRF 10 (fib 1)</td><td class="diff">VRF 20 (fib 2)</td><td class="diff">✗ Different</td></tr>
+<tr><td>PE-SEC egress → PE2 (transport)</td><td class="match">1500</td><td class="match">1500</td><td class="match">✓ Same</td></tr>
+<tr><td>PE-SEC egress → PE2 (VPN)</td><td class="diff">500</td><td class="diff">700</td><td class="diff">✗ Different</td></tr>
+<tr><td>Final TTL at destination</td><td class="diff">57 (7 hops)</td><td class="diff">59 (5 hops)</td><td class="diff">✗ Different</td></tr>
+</table>
+
+<strong style="color:var(--green);display:block;margin-top:12px">Key Insight:</strong>
+  Transport labels are <strong style="color:var(--purple)">identical</strong> — P routers (LSR1, LSR2) are completely VRF-unaware. They just swap the top label.
+  VPN labels are <strong style="color:var(--green)">different</strong> — this is what tells PE-SEC and PE2 <em>which VRF</em> to deliver into.
+  Same GRE tunnel, same FW, same MPLS path — only the VPN label changes.
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- LIVE PACKET CAPTURES — Evidence of path taken (both VRFs)   -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<div style="text-align:center;padding:18px 16px 6px;">
+  <h2 style="color:var(--cyan);font-size:1.2rem;font-weight:700;margin-bottom:4px">📦 Live Packet Captures — Path Evidence</h2>
+  <p style="color:var(--muted);font-size:0.78rem">Real captures from host, PE, and FW nodes proving the complete data-plane path for both VRFs</p>
+</div>
+
+<!-- ── VRF 10: Ping output ── -->
+<div class="trace-section">
+  <div class="trace-header" onclick="toggleTrace('cap-vrf10-ping')">
+    <h3>🔵 VRF 10 — Ping: host1 (10.1.1.10) → host2 (10.1.2.10)</h3>
+    <span class="toggle" id="toggle-cap-vrf10-ping">▼</span>
+  </div>
+  <div class="trace-body" id="body-cap-vrf10-ping">
+<span class="highlight">$ docker exec host1 ping -c 3 10.1.2.10</span>
+PING 10.1.2.10 (10.1.2.10) 56(84) bytes of data.
+64 bytes from 10.1.2.10: icmp_seq=1 <span class="ttl-hl">ttl=57</span> time=388 ms
+64 bytes from 10.1.2.10: icmp_seq=2 <span class="ttl-hl">ttl=57</span> time=316 ms
+64 bytes from 10.1.2.10: icmp_seq=3 <span class="ttl-hl">ttl=57</span> time=274 ms
+
+--- 10.1.2.10 ping statistics ---
+3 packets transmitted, <span class="action-hl">3 received</span>, 0% packet loss, time 1999ms
+rtt min/avg/max/mdev = 274.122/325.897/387.659/46.886 ms
+
+<span style="color:var(--green)">✓ TTL=57 confirms 7 IP-level hops: host1→CE1→PE1→PE-SEC→FW→PE-SEC→PE2→CE2→host2</span>
+  </div>
+</div>
+
+<!-- ── VRF 10: PE1 MPLS label push ── -->
+<div class="trace-section">
+  <div class="trace-header" onclick="toggleTrace('cap-vrf10-pe1')">
+    <h3>🔵 VRF 10 — PE1 MPLS Label Push (VPP FIB)</h3>
+    <span class="toggle" id="toggle-cap-vrf10-pe1">▼</span>
+  </div>
+  <div class="trace-body" id="body-cap-vrf10-pe1">
+<span class="highlight">$ docker exec pe1 vppctl "show ip fib table 10 10.1.2.0/24"</span>
+
+ipv4-VRF:10, fib_index:1
+10.1.2.0/24 fib:1 index:53 locks:2
+
+  Extensions:
+    path:73  labels:[<span class="action-hl">[150 pipe ttl:0 exp:0]</span><span class="action-hl">[1100 pipe ttl:0 exp:0]</span>]
+
+  forwarding:   unicast-ip4-chain
+    mpls-label: <span style="color:var(--purple);font-weight:700">[150:64:0:neos]</span><span style="color:var(--green);font-weight:700">[1100:64:0:eos]</span>
+      mpls via 100.64.2.20 host-eth4   <span class="ttl-hl">← toward LSR1</span>
+
+<span style="color:var(--muted)">┌─────────────────────────────────────────────────┐
+│  PE1 pushes 2-label MPLS stack for VRF 10:      │
+│                                                  │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────────┐ │
+│  │ Label:150│ │Label:1100│ │ IPv4: 10.1.1.10  │ │
+│  │ S=0,neos │ │ S=1,eos  │ │  → 10.1.2.10     │ │
+│  │Transport │ │ VPN(VRF10│ │  ICMP echo_req   │ │
+│  └──────────┘ └──────────┘ └──────────────────┘ │
+│  ← Outer       ← Inner      ← Payload           │
+└─────────────────────────────────────────────────┘</span>
+  </div>
+</div>
+
+<!-- ── VRF 10: LSR1 swap ── -->
+<div class="trace-section">
+  <div class="trace-header" onclick="toggleTrace('cap-vrf10-lsr1')">
+    <h3>🔵 VRF 10 — LSR1 Swap 150→250 (VPP MPLS FIB)</h3>
+    <span class="toggle" id="toggle-cap-vrf10-lsr1">▼</span>
+  </div>
+  <div class="trace-body" id="body-cap-vrf10-lsr1">
+<span class="highlight">$ docker exec lsr1 vppctl "show mpls fib 150"</span>
+
+150:neos/21 fib:0 index:24 locks:2
+  Extensions:
+    path:31  labels:[<span class="action-hl">[250 pipe ttl:0 exp:0]</span>]
+
+  forwarding:   mpls-neos-chain
+    mpls-label: <span style="color:var(--purple);font-weight:700">[250:64:0:neos]</span>
+      mpls via <span class="ttl-hl">100.64.3.20</span> host-eth0   <span class="ttl-hl">← toward LSR2</span>
+
+<span style="color:var(--muted)">LSR1 is a P-router — it only swaps the top (transport) label.
+It NEVER looks at the VPN label underneath (1100 or 1200).
+Same swap operation for BOTH VRF 10 and VRF 20 traffic!</span>
+  </div>
+</div>
+
+<!-- ── VRF 10: LSR2 swap + GRE ── -->
+<div class="trace-section">
+  <div class="trace-header" onclick="toggleTrace('cap-vrf10-lsr2')">
+    <h3>🔵 VRF 10 — LSR2 Swap 250→310 + GRE Encap (VPP MPLS FIB)</h3>
+    <span class="toggle" id="toggle-cap-vrf10-lsr2">▼</span>
+  </div>
+  <div class="trace-body" id="body-cap-vrf10-lsr2">
+<span class="highlight">$ docker exec lsr2 vppctl "show mpls fib 250"</span>
+
+250:neos/21 fib:0 index:33 locks:2
+  Extensions:
+    path:47  labels:[<span class="action-hl">[310 pipe ttl:0 exp:0]</span>]
+
+  forwarding:   mpls-neos-chain
+    mpls-label: <span style="color:var(--purple);font-weight:700">[310:64:0:neos]</span>
+      mpls via 0.0.0.0 <span class="ttl-hl">gre0</span>   <span class="ttl-hl">← GRE tunnel to PE-SEC</span>
+        stacked-on:
+          ipv4 via <span style="color:var(--yellow);font-weight:700">203.0.113.2</span> host-eth0  ← GRE outer IP to PE-SEC
+
+<span style="color:var(--muted)">LSR2 swaps 250→310 and pushes into GRE tunnel.
+On the wire: [Eth][IP:203.0.113.1→.2][GRE][MPLS:310][MPLS:VPN][IPv4][ICMP]</span>
+  </div>
+</div>
+
+<!-- ── VRF 10: PE-SEC disposition ── -->
+<div class="trace-section">
+  <div class="trace-header" onclick="toggleTrace('cap-vrf10-pesec')">
+    <h3>🔵 VRF 10 — PE-SEC MPLS Label Disposition (VPP MPLS FIB)</h3>
+    <span class="toggle" id="toggle-cap-vrf10-pesec">▼</span>
+  </div>
+  <div class="trace-body" id="body-cap-vrf10-pesec">
+<span class="highlight">$ docker exec pe-sec vppctl "show mpls fib"</span>   (filtered)
+
+<span style="color:var(--purple);font-weight:700">1100</span>:eos/21 fib:0 index:78 locks:2      ← <span class="action-hl">VRF 10 VPN label</span>
+  path:[114]  ip4 deag:  oper-flags:resolved
+  → <span style="color:var(--green);font-weight:700">disposition into VRF 10 (fib 1)</span>
+
+<span style="color:var(--pink);font-weight:700">1200</span>:eos/21 fib:0 index:79 locks:2      ← <span class="action-hl">VRF 20 VPN label</span>
+  path:[115]  ip4 deag:  oper-flags:resolved
+  → <span style="color:var(--green);font-weight:700">disposition into VRF 20 (fib 2)</span>
+
+<span style="color:var(--muted)">This is the KEY VRF multiplexing point:
+  label 1100 → VRF 10 (fib 1) → route to FW via 100.64.100.20
+  label 1200 → VRF 20 (fib 2) → route to FW via 100.64.102.20
+Same GRE tunnel, same PE-SEC, but different VPN labels → different VRFs</span>
+  </div>
+</div>
+
+<!-- ── VRF 10: FW VPP Trace ── -->
+<div class="trace-section">
+  <div class="trace-header" onclick="toggleTrace('cap-vrf10-fw')">
+    <h3>🔵 VRF 10 — FW VPP Trace (request + reply through firewall)</h3>
+    <span class="toggle" id="toggle-cap-vrf10-fw">▼</span>
+  </div>
+  <div class="trace-body" id="body-cap-vrf10-fw">
+<span class="highlight">$ docker exec fw vppctl "trace add af-packet-input 50"</span>
+<span class="highlight">$ docker exec host1 ping -c 3 10.1.2.10</span>
+<span class="highlight">$ docker exec fw vppctl "show trace"</span>
+
+<span style="color:var(--orange);font-weight:700">────── Packet 1: ICMP echo_request (host1 → host2) ──────</span>
+
+<span class="action-hl">af-packet-input</span>  hw_if_index <span class="highlight">2</span> (host-eth1, VRF 10 ingress from PE-SEC)
+<span class="action-hl">ethernet-input</span>   IP4: 3a:fd:ab:20:3e:4d → aa:98:5d:3b:63:77
+<span class="action-hl">ip4-input</span>        ICMP: <span class="highlight">10.1.1.10 → 10.1.2.10</span>
+                   tos 0x00, <span class="ttl-hl">ttl 61</span>, length 84, checksum 0x41cc
+                   fragment id 0xe4c7, flags DONT_FRAGMENT
+                   ICMP echo_request checksum 0xa745 id 29
+<span class="action-hl">ip4-lookup</span>       <span style="color:var(--green);font-weight:700">fib 1</span> dpo-idx 17     ← <span class="ttl-hl">VRF 10</span>
+<span class="action-hl">ip4-rewrite</span>      via <span class="highlight">100.64.101.1</span> host-eth2    ← egress to PE-SEC <span class="ttl-hl">VRF 11</span>
+                   <span class="ttl-hl">TTL 61 → 60</span>
+<span class="action-hl">host-eth2-tx</span>     → PE-SEC VRF 11 (egress side)
+
+<span style="color:var(--orange);font-weight:700">────── Packet 2: ICMP echo_reply (host2 → host1) ──────</span>
+
+<span class="action-hl">af-packet-input</span>  hw_if_index <span class="highlight">2</span> (host-eth1, VRF 10 ingress)
+<span class="action-hl">ip4-input</span>        ICMP: <span class="highlight">10.1.2.10 → 10.1.1.10</span>
+                   <span class="ttl-hl">ttl 61</span>, fragment id 0xa67f
+                   ICMP <span class="action-hl">echo_reply</span> id 29
+<span class="action-hl">ip4-lookup</span>       <span style="color:var(--green);font-weight:700">fib 1</span>     ← VRF 10 (reply also inspected!)
+<span class="action-hl">ip4-rewrite</span>      via <span class="highlight">100.64.101.1</span> host-eth2    ← same egress path
+                   <span class="ttl-hl">TTL 61 → 60</span>
+
+<span style="color:var(--green)">✓ Both request AND reply traverse the FW for inspection (fib 1 = VRF 10)</span>
+<span style="color:var(--green)">✓ Ingress: host-eth1 (100.64.100.20), Egress: host-eth2 (100.64.101.20 → PE-SEC VRF 11)</span>
+  </div>
+</div>
+
+<!-- ═══════════ VRF 20 CAPTURES ═══════════ -->
+
+<!-- ── VRF 20: Ping output ── -->
+<div class="trace-section">
+  <div class="trace-header" onclick="toggleTrace('cap-vrf20-ping')" style="border-bottom-color:rgba(244,114,182,0.3)">
+    <h3 style="color:var(--pink)">🩷 VRF 20 — Ping: host3 (10.2.1.10) → host4 (10.2.2.10)</h3>
+    <span class="toggle" id="toggle-cap-vrf20-ping">▼</span>
+  </div>
+  <div class="trace-body" id="body-cap-vrf20-ping">
+<span class="highlight">$ docker exec host3 ping -c 3 10.2.2.10</span>
+PING 10.2.2.10 (10.2.2.10) 56(84) bytes of data.
+64 bytes from 10.2.2.10: icmp_seq=1 <span class="ttl-hl">ttl=57</span> time=349 ms
+64 bytes from 10.2.2.10: icmp_seq=2 <span class="ttl-hl">ttl=57</span> time=275 ms
+64 bytes from 10.2.2.10: icmp_seq=3 <span class="ttl-hl">ttl=57</span> time=332 ms
+
+--- 10.2.2.10 ping statistics ---
+3 packets transmitted, <span class="action-hl">3 received</span>, 0% packet loss, time 1999ms
+rtt min/avg/max/mdev = 275.395/318.623/348.835/31.362 ms
+
+<span class="highlight">$ docker exec host4 ping -c 3 10.2.1.10</span>    ← reverse direction
+PING 10.2.1.10 (10.2.1.10) 56(84) bytes of data.
+64 bytes from 10.2.1.10: icmp_seq=1 <span class="ttl-hl">ttl=57</span> time=328 ms
+64 bytes from 10.2.1.10: icmp_seq=2 <span class="ttl-hl">ttl=57</span> time=303 ms
+64 bytes from 10.2.1.10: icmp_seq=3 <span class="ttl-hl">ttl=57</span> time=237 ms
+
+--- 10.2.1.10 ping statistics ---
+3 packets transmitted, <span class="action-hl">3 received</span>, 0% packet loss
+
+<span style="color:var(--pink)">✓ Same TTL=57 as VRF 10 — same number of hops through the MPLS core + FW</span>
+  </div>
+</div>
+
+<!-- ── VRF 20: PE1 MPLS label push ── -->
+<div class="trace-section">
+  <div class="trace-header" onclick="toggleTrace('cap-vrf20-pe1')" style="border-bottom-color:rgba(244,114,182,0.3)">
+    <h3 style="color:var(--pink)">🩷 VRF 20 — PE1 MPLS Label Push (VPP FIB)</h3>
+    <span class="toggle" id="toggle-cap-vrf20-pe1">▼</span>
+  </div>
+  <div class="trace-body" id="body-cap-vrf20-pe1">
+<span class="highlight">$ docker exec pe1 vppctl "show ip fib table 20 10.2.2.0/24"</span>
+
+ipv4-VRF:20, fib_index:2
+10.2.2.0/24 fib:2 index:56 locks:2
+
+  Extensions:
+    path:73  labels:[<span class="action-hl">[150 pipe ttl:0 exp:0]</span><span style="color:var(--pink);font-weight:700">[1200 pipe ttl:0 exp:0]</span>]
+
+  forwarding:   unicast-ip4-chain
+    mpls-label: <span style="color:var(--purple);font-weight:700">[150:64:0:neos]</span><span style="color:var(--pink);font-weight:700">[1200:64:0:eos]</span>
+      mpls via 100.64.2.20 host-eth4   <span class="ttl-hl">← same next-hop as VRF 10!</span>
+
+<span style="color:var(--muted)">┌─────────────────────────────────────────────────────────────────────┐
+│  Compare PE1 label stacks — VRF 10 vs VRF 20:                      │
+│                                                                     │
+│  VRF 10: [<span style="color:var(--purple)">150</span>:neos][<span style="color:var(--accent)">1100</span>:eos]  via 100.64.2.20 (LSR1)             │
+│  VRF 20: [<span style="color:var(--purple)">150</span>:neos][<span style="color:var(--pink)">1200</span>:eos]  via 100.64.2.20 (LSR1)             │
+│           ↑ same!    ↑ different!                                   │
+│                                                                     │
+│  Same transport label (150) = same LSP through LSR1→LSR2→PE-SEC    │
+│  Different VPN label = PE-SEC knows which VRF to deliver into       │
+└─────────────────────────────────────────────────────────────────────┘</span>
+  </div>
+</div>
+
+<!-- ── VRF 20: PE-SEC trace showing full decap ── -->
+<div class="trace-section">
+  <div class="trace-header" onclick="toggleTrace('cap-vrf20-pesec')" style="border-bottom-color:rgba(244,114,182,0.3)">
+    <h3 style="color:var(--pink)">🩷 VRF 20 — PE-SEC Full VPP Trace (GRE → MPLS → VRF 20 → FW)</h3>
+    <span class="toggle" id="toggle-cap-vrf20-pesec">▼</span>
+  </div>
+  <div class="trace-body" id="body-cap-vrf20-pesec">
+<span class="highlight">$ docker exec pe-sec vppctl "trace add af-packet-input 50"</span>
+<span class="highlight">$ docker exec host3 ping -c 2 10.2.2.10</span>
+<span class="highlight">$ docker exec pe-sec vppctl "show trace"</span>
+
+<span style="color:var(--pink);font-weight:700">────── PE-SEC Ingress: GRE decap → MPLS disposition → VRF 20 ──────</span>
+
+<span class="action-hl">af-packet-input</span>  hw_if_index 3 (GRE transport interface)
+<span class="action-hl">ethernet-input</span>   IP4: ca:06:11:0f:55:b6 → ea:63:98:da:8f:05
+<span class="action-hl">ip4-input</span>        GRE: <span style="color:var(--yellow);font-weight:700">203.0.113.1 → 203.0.113.2</span>
+                   tos 0x00, ttl 253, length 116
+                   GRE <span class="ttl-hl">mpls_unicast</span>
+<span class="action-hl">ip4-receive</span>      fib:0 adj:7
+<span class="action-hl">gre4-input</span>       GRE: tunnel 9 len 116 src 203.0.113.1 dst 203.0.113.2
+<span class="action-hl">mpls-input</span>       MPLS: label <span style="color:var(--purple);font-weight:700">310</span> ttl 62 exp 0    ← transport label
+<span class="action-hl">mpls-lookup</span>      lookup fib index 0, label <span style="color:var(--purple);font-weight:700">310</span> eos 0
+<span class="action-hl">lookup-mpls-dst</span>  hdr:[<span style="color:var(--pink);font-weight:700">1200</span>:64:0:eos]         ← <span class="ttl-hl">VPN label 1200 = VRF 20</span>
+<span class="action-hl">ip4-mpls-label-disposition-pipe</span>  rpf-id:-1 ip4, pipe
+<span class="action-hl">lookup-ip4-dst</span>   <span style="color:var(--green);font-weight:700">fib-index:2</span> addr:10.2.2.10      ← <span class="ttl-hl">VRF 20!</span>
+<span class="action-hl">ip4-rewrite</span>      via <span class="highlight">100.64.102.20</span> host-eth6  ← <span class="ttl-hl">to FW VRF 20 ingress</span>
+<span class="action-hl">host-eth6-tx</span>     → FW
+
+<span style="color:var(--green)">✓ Complete decap chain visible: GRE → label 310 (deag) → label 1200 (VPN) → fib 2 (VRF 20) → FW</span>
+<span style="color:var(--pink)">✓ Compare with VRF 10: same path, but label 1100 → fib 1 (VRF 10) → FW via 100.64.100.20</span>
+  </div>
+</div>
+
+<!-- ── VRF 20: FW VPP Trace ── -->
+<div class="trace-section">
+  <div class="trace-header" onclick="toggleTrace('cap-vrf20-fw')" style="border-bottom-color:rgba(244,114,182,0.3)">
+    <h3 style="color:var(--pink)">🩷 VRF 20 — FW VPP Trace (request + reply through firewall)</h3>
+    <span class="toggle" id="toggle-cap-vrf20-fw">▼</span>
+  </div>
+  <div class="trace-body" id="body-cap-vrf20-fw">
+<span class="highlight">$ docker exec fw vppctl "trace add af-packet-input 50"</span>
+<span class="highlight">$ docker exec host3 ping -c 3 10.2.2.10</span>
+<span class="highlight">$ docker exec fw vppctl "show trace"</span>
+
+<span style="color:var(--pink);font-weight:700">────── Packet 1: ICMP echo_request (host3 → host4) ──────</span>
+
+<span class="action-hl">af-packet-input</span>  hw_if_index <span class="highlight">4</span> (host-eth3, <span style="color:var(--pink)">VRF 20</span> ingress from PE-SEC)
+<span class="action-hl">ethernet-input</span>   IP4: 9a:b9:6b:47:71:91 → 6a:92:26:24:51:c4
+<span class="action-hl">ip4-input</span>        ICMP: <span class="highlight">10.2.1.10 → 10.2.2.10</span>
+                   tos 0x00, <span class="ttl-hl">ttl 61</span>, length 84, checksum 0x06bf
+                   fragment id 0x1fd3, flags DONT_FRAGMENT
+                   ICMP echo_request id 30
+<span class="action-hl">ip4-lookup</span>       <span style="color:var(--pink);font-weight:700">fib 2</span> dpo-idx 18     ← <span class="ttl-hl">VRF 20!</span>
+<span class="action-hl">ip4-rewrite</span>      via <span class="highlight">100.64.103.1</span> host-eth4    ← egress to PE-SEC <span class="ttl-hl">VRF 21</span>
+                   <span class="ttl-hl">TTL 61 → 60</span>
+<span class="action-hl">host-eth4-tx</span>     → PE-SEC VRF 21 (egress side)
+
+<span style="color:var(--pink);font-weight:700">────── Packet 2: ICMP echo_reply (host4 → host3) ──────</span>
+
+<span class="action-hl">af-packet-input</span>  hw_if_index <span class="highlight">4</span> (host-eth3, VRF 20 ingress)
+<span class="action-hl">ip4-input</span>        ICMP: <span class="highlight">10.2.2.10 → 10.2.1.10</span>
+                   <span class="ttl-hl">ttl 61</span>
+                   ICMP <span class="action-hl">echo_reply</span> id 30
+<span class="action-hl">ip4-lookup</span>       <span style="color:var(--pink);font-weight:700">fib 2</span>     ← VRF 20 (reply also inspected!)
+<span class="action-hl">ip4-rewrite</span>      via <span class="highlight">100.64.103.1</span> host-eth4
+                   <span class="ttl-hl">TTL 61 → 60</span>
+
+<span style="color:var(--green)">✓ Both request AND reply traverse the FW for VRF 20 inspection (fib 2)</span>
+<span style="color:var(--green)">✓ Different interfaces from VRF 10: ingress host-eth3 (not eth1), egress host-eth4 (not eth2)</span>
+  </div>
+</div>
+
+<!-- ── VRF Isolation proof ── -->
+<div class="trace-section">
+  <div class="trace-header" onclick="toggleTrace('cap-isolation')">
+    <h3>🔒 VRF Isolation — Cross-VRF Traffic Blocked</h3>
+    <span class="toggle" id="toggle-cap-isolation">▼</span>
+  </div>
+  <div class="trace-body" id="body-cap-isolation">
+<span class="highlight">$ docker exec host1 ping -c 2 -W 2 10.2.2.10</span>      ← VRF 10 host → VRF 20 host
+PING 10.2.2.10 (10.2.2.10) 56(84) bytes of data.
+
+--- 10.2.2.10 ping statistics ---
+2 packets transmitted, <span style="color:var(--red);font-weight:700">0 received, 100% packet loss</span>
+
+<span class="highlight">$ docker exec host3 ping -c 2 -W 2 10.1.2.10</span>      ← VRF 20 host → VRF 10 host
+PING 10.1.2.10 (10.1.2.10) 56(84) bytes of data.
+
+--- 10.1.2.10 ping statistics ---
+2 packets transmitted, <span style="color:var(--red);font-weight:700">0 received, 100% packet loss</span>
+
+<span style="color:var(--green)">✓ VRF isolation confirmed — despite sharing the same MPLS core, GRE tunnel, and FW,
+  VRF 10 and VRF 20 are completely isolated from each other.</span>
+<span style="color:var(--muted)">
+  Why it works:
+  • CE1 (VRF 10) has no route to 10.2.0.0/16 — it's in a different VRF on PE1
+  • Even if traffic reached PE1, VRF 10 FIB has no entry for 10.2.x.x
+  • PE-SEC VPN labels (1100 vs 1200) deliver into separate FIBs
+  • FW has separate VRF tables with separate default routes</span>
+  </div>
+</div>
+
+<!-- ── Side-by-side FW comparison ── -->
+<div class="trace-section">
+  <div class="trace-header" onclick="toggleTrace('cap-fw-compare')">
+    <h3>⚖️ Side-by-Side: FW Processing — VRF 10 vs VRF 20</h3>
+    <span class="toggle" id="toggle-cap-fw-compare">▼</span>
+  </div>
+  <div class="trace-body" id="body-cap-fw-compare">
+<table class="correlation-table">
+<tr><th style="width:25%">FW Aspect</th><th>VRF 10 (host1→host2)</th><th>VRF 20 (host3→host4)</th></tr>
+<tr><td>Ingress interface</td><td>hw_if_index <span class="highlight">2</span> (host-eth1)</td><td>hw_if_index <span style="color:var(--pink);font-weight:700">4</span> (host-eth3)</td></tr>
+<tr><td>Ingress IP</td><td class="match">100.64.100.20</td><td class="diff">100.64.102.20</td></tr>
+<tr><td>FIB lookup</td><td><span style="color:var(--accent);font-weight:700">fib 1</span> (VRF 10)</td><td><span style="color:var(--pink);font-weight:700">fib 2</span> (VRF 20)</td></tr>
+<tr><td>Egress interface</td><td>host-eth2</td><td class="diff">host-eth4</td></tr>
+<tr><td>Egress next-hop</td><td><span class="match">100.64.101.1</span> (PE-SEC VRF 11)</td><td class="diff">100.64.103.1 (PE-SEC VRF 21)</td></tr>
+<tr><td>Source IP</td><td class="match">10.1.1.10</td><td class="diff">10.2.1.10</td></tr>
+<tr><td>Dest IP</td><td class="match">10.1.2.10</td><td class="diff">10.2.2.10</td></tr>
+<tr><td>TTL in/out</td><td class="match">61 → 60</td><td class="match">61 → 60</td></tr>
+<tr><td>ICMP ID</td><td>29</td><td class="diff">30</td></tr>
+<tr><td>Reply also inspected?</td><td class="match">✓ Yes</td><td class="match">✓ Yes</td></tr>
+</table>
+
+<span style="color:var(--green);display:block;margin-top:10px">Key: Same FW box, same VPP data plane — but completely separate forwarding paths via VRF-specific FIBs, interfaces, and next-hops.</span>
+  </div>
+</div>
+
+<div style="text-align:center;padding:16px;color:var(--muted);font-size:0.72rem">
+  MPLS L3VPN Inline FW Lab — VPP 25.10 + FRR 10.5.1 — Live captures from Feb 15, 2026
+</div>
+
+<script>
+/* ─── Layer builder helpers ──────────────────────────── */
+function L(type, hdr, fields, flags) {
+  const cls = ['wire-layer', 'l-' + type];
+  if (flags) { if (flags.changed) cls.push('changed'); if (flags.stripped) cls.push('stripped'); if (flags.added) cls.push('added'); }
+  let body = '';
+  if (type === 'mpls-t' || type === 'mpls-v') {
+    const lc = type === 'mpls-t' ? 'var(--purple)' : 'var(--green)';
+    const lChg = String(fields.Label).includes('→')||String(fields.Label).includes('pop')||String(fields.Label).includes('deag')||String(fields.Label).includes('disp');
+    const tChg = String(fields.TTL).includes('→');
+    body = `<div class="mpls-hdr-table">
+      <span class="mh">Label</span><span class="mh">TC</span><span class="mh">S</span><span class="mh">TTL</span>
+      <span class="mv" style="color:${lChg?'var(--orange)':lc};font-weight:700">${fields.Label}</span>
+      <span class="mv">${fields.TC||'0'}</span>
+      <span class="mv" style="color:${fields.S==='1'?'var(--green)':'var(--muted)'};font-weight:${fields.S==='1'?'700':'400'}">${fields.S}</span>
+      <span class="mv" style="${tChg?'color:var(--orange);font-weight:600':''}">${fields.TTL}</span>
+    </div><div style="font-size:0.62rem;color:var(--muted);margin-top:4px;text-align:center">${fields.S==='1'?'↑ Bottom of Stack':'↑ Not Bottom'}</div>`;
+  } else {
+    body = Object.entries(fields).map(([k,v]) => {
+      let vc='wv'; if(typeof v==='string'){if(v.startsWith('⚡')){vc='wv changed';v=v.slice(1);}else if(v.startsWith('★')){vc='wv hi';v=v.slice(1);}}
+      return `<div class="wire-field"><span class="wk">${k}: </span><span class="${vc}">${v}</span></div>`;
+    }).join('');
+  }
+  return `<div class="${cls.join(' ')}"><div class="wire-layer-hdr">${hdr}</div><div class="wire-layer-body">${body}</div></div>`;
+}
+
+const ETH    = (et,f) => L('eth','Ethernet II',{EtherType:et},f);
+const GRE_IP = (s,d,f) => L('gre-ip','Outer IPv4',{Src:s,Dst:d,Proto:'47 (GRE)',TTL:'255'},f);
+const GRE    = (f) => L('gre','GRE Header',{Protocol:'0x8847',Flags:'0x0000',Ver:'0'},f);
+const MPLS_T = (l,t,f) => L('mpls-t','MPLS Transport',{Label:l,TC:'0',S:'0',TTL:t},f);
+const MPLS_V = (l,t,f) => L('mpls-v','MPLS VPN (BoS)',{Label:l,TC:'0',S:'1',TTL:t},f);
+
+// VRF-10 specific (with captured trace values)
+const IP4 = (s,d,t,x,f) => L('ip','IPv4',Object.assign({Src:s,Dst:d,TTL:t,Proto:'1 (ICMP)',TotLen:'84',FragID:'0xcaa4',Flags:'DF'},x||{}),f);
+const ICMP = (t,f) => L('icmp','ICMP',{Type:t||'echo_request',ID:'14',Seq:'1',Cksum:'0x10a4'},f);
+
+// VRF-20 (no captured traces, generic values)
+const IP4_20 = (s,d,t,x,f) => L('ip','IPv4',Object.assign({Src:s,Dst:d,TTL:t,Proto:'1 (ICMP)',TotLen:'84',Flags:'DF'},x||{}),f);
+const ICMP_20 = (t,f) => L('icmp','ICMP',{Type:t||'echo_request',Seq:'1'},f);
+
+function wireHTML(layers, annotation) {
+  let h = '<div class="wire-title">Packet Structure on Wire (outermost → innermost)</div>';
+  h += `<div class="wire-legend">
+    <span><div class="ws" style="box-shadow:inset 0 -2px 0 var(--orange)"></div> Modified</span>
+    <span><div class="ws" style="box-shadow:inset 0 -2px 0 var(--green)"></div> Added</span>
+    <span><div class="ws" style="opacity:0.35;background:var(--border)"></div> Stripped/opaque</span>
+  </div>`;
+  h += '<div class="wire-container">' + layers.join('') + '</div>';
+  if (annotation) h += `<div style="font-size:0.78rem;color:var(--muted);margin-bottom:14px;padding:6px 10px;background:rgba(0,0,0,0.15);border-radius:6px;border-left:3px solid var(--border);line-height:1.6">${annotation}</div>`;
+  return h;
+}
+
+/* ═══════════ VRF 10 FORWARD (host1→host2) — 12 steps ═══════════ */
+const V10_FWD = [
+  { id:'host1', title:'host1 → CE1', badge:'Hop 1', activeNodes:['node-host1'], activeLinks:['link-host1-ce1'], dotPos:{x:120,y:210},
+    wire:()=>wireHTML([ETH('0x0800'),IP4('★10.1.1.10','★10.1.2.10','64'),ICMP('echo_request')],'Pure IP frame. TTL starts at 64.'),
+    action:'<strong>host1</strong> ICMP echo to 10.1.2.10. Default route via CE1 (10.1.1.1).' },
+  { id:'ce1', title:'CE1 → PE1', badge:'Hop 2', activeNodes:['node-ce1'], activeLinks:['link-ce1-pe1'], dotPos:{x:250,y:210},
+    wire:()=>wireHTML([ETH('0x0800'),IP4('10.1.1.10','10.1.2.10','⚡64 → 63'),ICMP('echo_request')],'CE1 decrements TTL. Still pure IP — CE is not MPLS-aware.'),
+    action:'<strong>CE1</strong> ip4-lookup: 10.1.2.0/24 via PE1 (eBGP). TTL 64→63.' },
+  { id:'pe1', title:'PE1 — MPLS Imposition', badge:'Hop 3', activeNodes:['node-pe1'], activeLinks:['link-pe1-lsr1'], dotPos:{x:385,y:210},
+    wire:()=>wireHTML([ETH('⚡0x8847',{changed:true}),MPLS_T('150','62',{added:true}),MPLS_V('1100','62',{added:true}),IP4('10.1.1.10','10.1.2.10','⚡63 → 62'),ICMP('echo_request')],
+      `<strong>PE1 pushes 2-label stack.</strong> EtherType → 0x8847 (MPLS).<br>▸ Transport <strong style="color:var(--purple)">150</strong> — path to PE-SEC via LSR1. S=0.<br>▸ VPN <strong style="color:var(--green)">1100</strong> — PE-SEC's VRF 10 label. S=1 (BoS).<br>▸ MPLS TTL=62 (pipe mode).`),
+    action:'<strong>PE1</strong> VRF 10: push [150][1100] via LSR1. TTL 63→62.' },
+  { id:'lsr1', title:'LSR1 — Label Swap', badge:'Hop 4', activeNodes:['node-lsr1'], activeLinks:['link-lsr1-lsr2'], dotPos:{x:510,y:210},
+    wire:()=>wireHTML([ETH('0x8847'),MPLS_T('⚡150 → 250','⚡62 → 61',{changed:true}),MPLS_V('1100','62'),IP4('10.1.1.10','10.1.2.10','62',{},{stripped:true}),ICMP('echo_request',{stripped:true})],
+      `<strong>LSR1 (P router)</strong> swaps <strong style="color:var(--purple)">150→250</strong>. VPN label 1100 untouched — P router never peeks below top label.`),
+    action:'<strong>LSR1</strong> swap 150→250. MPLS TTL 62→61. Via LSR2.' },
+  { id:'lsr2', title:'LSR2 — Swap + GRE Encap', badge:'Hop 5', activeNodes:['node-lsr2'], activeLinks:['link-lsr2-pesec'], dotPos:{x:575,y:285},
+    wire:()=>wireHTML([ETH('⚡0x0800',{changed:true}),GRE_IP('★203.0.113.1','★203.0.113.2',{added:true}),GRE({added:true}),MPLS_T('⚡250 → 310','⚡61 → 60',{changed:true}),MPLS_V('1100','62'),IP4('10.1.1.10','10.1.2.10','62',{},{stripped:true}),ICMP('echo_request',{stripped:true})],
+      `<strong>LSR2</strong> swaps <strong style="color:var(--purple)">250→310</strong> + <strong style="color:var(--yellow)">GRE encap</strong> to PE-SEC. 7 headers deep!`),
+    action:'<strong>LSR2</strong> swap 250→310 + GRE (203.0.113.1→203.0.113.2).' },
+  { id:'pesec-in', title:'PE-SEC — GRE Decap → VRF 10', badge:'Hop 6', activeNodes:['node-pesec'], activeLinks:['link-pesec-fw'], dotPos:{x:470,y:358},
+    wire:()=>wireHTML([ETH('0x0800',{stripped:true}),GRE_IP('203.0.113.1','203.0.113.2',{stripped:true}),GRE({stripped:true}),MPLS_T('310 → deag','—',{stripped:true}),MPLS_V('1100 → disp','→ VRF 10',{stripped:true}),IP4('10.1.1.10','10.1.2.10','⚡62 → 61',{FIB:'★1 (VRF 10)'}),ICMP('echo_request')],
+      `<strong>PE-SEC strips 5 headers:</strong> GRE decap → label 310 deag → label <strong style="color:var(--green)">1100</strong> disposition → <strong>VRF 10</strong>. IP TTL 62→61.`),
+    action:'<strong>PE-SEC</strong> GRE decap → 310 deag → 1100 → VRF 10. Route to FW (100.64.100.20).' },
+  { id:'fw', title:'🔥 FW — VRF 10 Inspection', badge:'Hop 7', activeNodes:['node-fw'], activeLinks:['link-pesec-fw','link-fw-pesec'], dotPos:{x:405,y:365}, isFW:true,
+    wire:()=>wireHTML([ETH('0x0800'),L('fw','🔥 FW Inspection',{'In':'host-eth2 (100.64.100.20)',VRF:'★fib 1 (VRF 10)',Route:'0.0.0.0/0 → default','Out':'host-eth3 (100.64.101.20)','Out-NH':'★100.64.101.1'}),IP4('10.1.1.10','10.1.2.10','⚡61 → 60',{FragID:'★0xcaa4'}),ICMP('echo_request')],
+      `<strong style="color:var(--orange)">FW inspects in VRF 10.</strong> Ingress host-eth2 → VRF 10 default → egress host-eth3 → PE-SEC <strong>VRF 11</strong>. TTL 61→60.`),
+    action:'<strong>FW</strong> VRF 10 inspection. host-eth2 → host-eth3. TTL 61→60. Egress → PE-SEC VRF 11.' },
+  { id:'pesec-out', title:'PE-SEC VRF 11 — Re-encap', badge:'Hop 8', activeNodes:['node-pesec'], activeLinks:['link-fw-pesec','link-lsr2-pesec'], dotPos:{x:575,y:340},
+    wire:()=>wireHTML([ETH('⚡0x0800',{changed:true}),GRE_IP('★203.0.113.2','★203.0.113.1',{added:true}),GRE({added:true}),MPLS_T('1500','59',{added:true}),MPLS_V('500','59',{added:true}),IP4('10.1.1.10','10.1.2.10','⚡60 → 59'),ICMP('echo_request')],
+      `<strong>PE-SEC VRF 11</strong> re-encap: GRE + transport <strong style="color:var(--purple)">1500</strong> + VPN <strong style="color:var(--green)">500</strong> (PE2's VRF 10 label). Completely new labels vs ingress path.`),
+    action:'<strong>PE-SEC VRF 11</strong>: push [1500][500] + GRE to LSR2. TTL 60→59.' },
+  { id:'lsr2-fwd', title:'LSR2 — GRE Decap + Swap', badge:'Hop 9', activeNodes:['node-lsr2'], activeLinks:['link-lsr2-pe2'], dotPos:{x:640,y:210},
+    wire:()=>wireHTML([ETH('⚡0x8847',{changed:true}),GRE_IP('203.0.113.2','203.0.113.1',{stripped:true}),GRE({stripped:true}),MPLS_T('⚡1500 → 1501','⚡59 → 58',{changed:true}),MPLS_V('500','59'),IP4('10.1.1.10','10.1.2.10','59',{},{stripped:true}),ICMP('echo_request',{stripped:true})],
+      `<strong>LSR2</strong> GRE decap, swap <strong style="color:var(--purple)">1500→1501</strong>. Pure MPLS to PE2.`),
+    action:'<strong>LSR2</strong> GRE decap → swap 1500→1501 → PE2.' },
+  { id:'pe2', title:'PE2 — MPLS Disposition', badge:'Hop 10', activeNodes:['node-pe2'], activeLinks:['link-pe2-ce2'], dotPos:{x:780,y:210},
+    wire:()=>wireHTML([ETH('⚡0x0800',{changed:true}),MPLS_T('1501 → pop','—',{stripped:true}),MPLS_V('500 → disp','→ VRF 10',{stripped:true}),IP4('10.1.1.10','10.1.2.10','⚡59 → 58'),ICMP('echo_request')],
+      `<strong>PE2</strong> pops 1501 + <strong style="color:var(--green)">500</strong> → VRF 10. EtherType reverts to 0x0800.`),
+    action:'<strong>PE2</strong> pop → VRF 10. TTL 59→58. Forward to CE2.' },
+  { id:'ce2', title:'CE2 → host2', badge:'Hop 11', activeNodes:['node-ce2'], activeLinks:['link-ce2-host2'], dotPos:{x:915,y:210},
+    wire:()=>wireHTML([ETH('0x0800'),IP4('10.1.1.10','10.1.2.10','⚡58 → 57',{FragID:'★0xcaa4'}),ICMP('echo_request')],
+      `<strong>CE2</strong> ip4-lookup → host2 direct. TTL 58→<strong style="color:var(--green)">57</strong> matches ping ✓`),
+    action:'<strong>CE2</strong> → host2 via host-eth0. TTL 58→57 ✓' },
+  { id:'host2', title:'host2 — Delivered ✓', badge:'Hop 12', activeNodes:['node-host2'], activeLinks:[], dotPos:{x:985,y:210},
+    wire:()=>wireHTML([ETH('0x0800'),IP4('10.1.1.10','10.1.2.10','★57'),ICMP('★echo_request')],
+      `<strong style="color:var(--green)">Delivered ✓</strong> 7 TTL decrements (64→57). 2 MPLS segments, 1 GRE tunnel each way, 1 FW inspection.`),
+    action:'<strong>Delivered.</strong> 12 hops, 7 IP decrements, FW inspected ✓' },
+];
+
+/* ═══════════ VRF 10 RETURN (host2→host1) — 12 steps ═══════════ */
+const V10_RET = [
+  { id:'host2r', title:'host2 → CE2', badge:'Hop 1', activeNodes:['node-host2'], activeLinks:['link-ce2-host2'], dotPos:{x:915,y:210},
+    wire:()=>wireHTML([ETH('0x0800'),IP4('★10.1.2.10','★10.1.1.10','64'),ICMP('echo_reply')],'Return path. Src/Dst swapped. ICMP echo <strong>reply</strong>.'),
+    action:'<strong>host2</strong> echo_reply. Via CE2 (10.1.2.1).' },
+  { id:'ce2r', title:'CE2 → PE2', badge:'Hop 2', activeNodes:['node-ce2'], activeLinks:['link-pe2-ce2'], dotPos:{x:780,y:210},
+    wire:()=>wireHTML([ETH('0x0800'),IP4('10.1.2.10','10.1.1.10','⚡64 → 63'),ICMP('echo_reply')]),
+    action:'<strong>CE2</strong> TTL 64→63. Forward to PE2.' },
+  { id:'pe2r', title:'PE2 — MPLS Push', badge:'Hop 3', activeNodes:['node-pe2'], activeLinks:['link-lsr2-pe2'], dotPos:{x:640,y:210},
+    wire:()=>wireHTML([ETH('⚡0x8847',{changed:true}),MPLS_T('1300','62',{added:true}),MPLS_V('1100','62',{added:true}),IP4('10.1.2.10','10.1.1.10','⚡63 → 62'),ICMP('echo_reply')],
+      `PE2 pushes transport <strong style="color:var(--purple)">1300</strong> + VPN <strong style="color:var(--green)">1100</strong> (same VPN label as forward — PE-SEC advertises one per VRF).`),
+    action:'<strong>PE2</strong> push [1300][1100] via LSR2.' },
+  { id:'lsr2r', title:'LSR2 — Swap + GRE', badge:'Hop 4', activeNodes:['node-lsr2'], activeLinks:['link-lsr2-pesec'], dotPos:{x:575,y:285},
+    wire:()=>wireHTML([ETH('⚡0x0800',{changed:true}),GRE_IP('★203.0.113.1','★203.0.113.2',{added:true}),GRE({added:true}),MPLS_T('⚡1300 → 310','⚡62 → 61',{changed:true}),MPLS_V('1100','62'),IP4('10.1.2.10','10.1.1.10','62',{},{stripped:true}),ICMP('echo_reply',{stripped:true})],
+      `LSR2 swaps <strong style="color:var(--purple)">1300→310</strong> + GRE. Same deag label 310 as forward.`),
+    action:'<strong>LSR2</strong> swap 1300→310 + GRE to PE-SEC.' },
+  { id:'pesecr-in', title:'PE-SEC — GRE Decap → VRF 10', badge:'Hop 5', activeNodes:['node-pesec'], activeLinks:['link-pesec-fw'], dotPos:{x:470,y:358},
+    wire:()=>wireHTML([ETH('0x0800',{stripped:true}),GRE_IP('203.0.113.1','203.0.113.2',{stripped:true}),GRE({stripped:true}),MPLS_T('310 → deag','—',{stripped:true}),MPLS_V('1100 → disp','→ VRF 10',{stripped:true}),IP4('10.1.2.10','10.1.1.10','⚡62 → 61',{FIB:'★1 (VRF 10)'}),ICMP('echo_reply')]),
+    action:'<strong>PE-SEC</strong> GRE decap → VRF 10 → FW.' },
+  { id:'fwr', title:'🔥 FW — VRF 10 Return', badge:'Hop 6', activeNodes:['node-fw'], activeLinks:['link-pesec-fw','link-fw-pesec'], dotPos:{x:405,y:365}, isFW:true,
+    wire:()=>wireHTML([ETH('0x0800'),L('fw','🔥 FW Inspection',{'In':'host-eth2',VRF:'★fib 1 (VRF 10)',Route:'default','Out':'host-eth3','NH':'★100.64.101.1'}),IP4('10.1.2.10','10.1.1.10','⚡61 → 60'),ICMP('echo_reply')],
+      `<strong style="color:var(--orange)">Return traffic also inspected.</strong> Same path through FW.`),
+    action:'<strong>FW</strong> return inspection. TTL 61→60.' },
+  { id:'pesecr-out', title:'PE-SEC VRF 11 — Re-encap', badge:'Hop 7', activeNodes:['node-pesec'], activeLinks:['link-fw-pesec','link-lsr2-pesec'], dotPos:{x:575,y:340},
+    wire:()=>wireHTML([ETH('⚡0x0800',{changed:true}),GRE_IP('★203.0.113.2','★203.0.113.1',{added:true}),GRE({added:true}),MPLS_T('1400','59',{added:true}),MPLS_V('600','59',{added:true}),IP4('10.1.2.10','10.1.1.10','⚡60 → 59'),ICMP('echo_reply')],
+      `PE-SEC VRF 11: transport <strong style="color:var(--purple)">1400</strong> + VPN <strong style="color:var(--green)">600</strong> (PE1's VRF 10 label).`),
+    action:'<strong>PE-SEC VRF 11</strong>: push [1400][600] + GRE.' },
+  { id:'lsr2r2', title:'LSR2 — GRE Decap + Swap', badge:'Hop 8', activeNodes:['node-lsr2'], activeLinks:['link-lsr1-lsr2'], dotPos:{x:510,y:210},
+    wire:()=>wireHTML([ETH('⚡0x8847',{changed:true}),GRE_IP('203.0.113.2','203.0.113.1',{stripped:true}),GRE({stripped:true}),MPLS_T('⚡1400 → 1401','⚡59 → 58',{changed:true}),MPLS_V('600','59'),IP4('10.1.2.10','10.1.1.10','59',{},{stripped:true}),ICMP('echo_reply',{stripped:true})]),
+    action:'<strong>LSR2</strong> GRE decap → swap 1400→1401 → LSR1.' },
+  { id:'lsr1r', title:'LSR1 — Swap', badge:'Hop 9', activeNodes:['node-lsr1'], activeLinks:['link-pe1-lsr1'], dotPos:{x:385,y:210},
+    wire:()=>wireHTML([ETH('0x8847'),MPLS_T('⚡1401 → 1402','⚡58 → 57',{changed:true}),MPLS_V('600','59'),IP4('10.1.2.10','10.1.1.10','59',{},{stripped:true}),ICMP('echo_reply',{stripped:true})]),
+    action:'<strong>LSR1</strong> swap 1401→1402 → PE1.' },
+  { id:'pe1r', title:'PE1 — MPLS Pop', badge:'Hop 10', activeNodes:['node-pe1'], activeLinks:['link-ce1-pe1'], dotPos:{x:250,y:210},
+    wire:()=>wireHTML([ETH('⚡0x0800',{changed:true}),MPLS_T('1402 → pop','—',{stripped:true}),MPLS_V('600 → disp','→ VRF 10',{stripped:true}),IP4('10.1.2.10','10.1.1.10','⚡59 → 58'),ICMP('echo_reply')]),
+    action:'<strong>PE1</strong> pop 1402+600 → VRF 10. TTL 59→58.' },
+  { id:'ce1r', title:'CE1 → host1', badge:'Hop 11', activeNodes:['node-ce1'], activeLinks:['link-host1-ce1'], dotPos:{x:120,y:210},
+    wire:()=>wireHTML([ETH('0x0800'),IP4('10.1.2.10','10.1.1.10','⚡58 → 57'),ICMP('echo_reply')]),
+    action:'<strong>CE1</strong> → host1. TTL 58→57.' },
+  { id:'host1r', title:'host1 — Reply ✓', badge:'Hop 12', activeNodes:['node-host1'], activeLinks:[], dotPos:{x:55,y:210},
+    wire:()=>wireHTML([ETH('0x0800'),IP4('10.1.2.10','10.1.1.10','★57'),ICMP('★echo_reply')],
+      `<strong style="color:var(--green)">Round-trip complete ✓</strong> RTT ~350ms. Both directions FW-inspected.`),
+    action:'<strong>Delivered.</strong> RTT ~350ms. FW inspected both ways ✓' },
+];
+
+/* ═══════════ VRF 20 FORWARD (CE3→CE4) — 10 steps ═══════════ */
+const V20_FWD = [
+  { id:'ce3', title:'CE3 — Originate', badge:'Hop 1', activeNodes:['node-ce3'], activeLinks:['link-ce3-pe1'], dotPos:{x:185,y:80}, isVRF20:true,
+    wire:()=>wireHTML([ETH('0x0800'),IP4_20('★100.64.6.20','★100.64.7.20','64'),ICMP_20('echo_request')],
+      `CE3 originates ICMP to CE4 (100.64.7.20). TTL=64. Default route → PE1 (100.64.6.10).<div class="compare-note"><strong>cf. VRF 10:</strong> host1 sends to host2. VRF 10 has an extra CE1 hop (host1→CE1) before PE1, so 1 extra IP decrement.</div>`),
+    action:'<strong>CE3</strong> ping 100.64.7.20 (CE4). Via PE1 (100.64.6.10). TTL=64.' },
+  { id:'pe1-20', title:'PE1 — MPLS Push (VRF 20)', badge:'Hop 2', activeNodes:['node-pe1'], activeLinks:['link-pe1-lsr1'], dotPos:{x:385,y:210}, isVRF20:true,
+    wire:()=>wireHTML([ETH('⚡0x8847',{changed:true}),MPLS_T('150','63',{added:true}),MPLS_V('1200','63',{added:true}),IP4_20('100.64.6.20','100.64.7.20','⚡64 → 63'),ICMP_20('echo_request')],
+      `<strong>PE1 pushes 2-label stack for VRF 20.</strong><br>▸ Transport <strong style="color:var(--purple)">150</strong> — <em>same as VRF 10!</em> Same LSP to PE-SEC via LSR1.<br>▸ VPN <strong style="color:var(--green)">1200</strong> — PE-SEC's label for <strong>VRF 20</strong> (vs 1100 for VRF 10).<br>▸ MPLS TTL=63 (pipe mode).
+      <div class="compare-note"><strong>cf. VRF 10:</strong> Transport 150 identical. VPN 1200 vs 1100 — <em>only the VPN label differs</em>. P routers will handle both identically.</div>`),
+    action:'<strong>PE1</strong> VRF 20: push [150][<strong>1200</strong>]. Same transport 150, different VPN.' },
+  { id:'lsr1-20', title:'LSR1 — Label Swap', badge:'Hop 3', activeNodes:['node-lsr1'], activeLinks:['link-lsr1-lsr2'], dotPos:{x:510,y:210}, isVRF20:true,
+    wire:()=>wireHTML([ETH('0x8847'),MPLS_T('⚡150 → 250','⚡63 → 62',{changed:true}),MPLS_V('1200','63'),IP4_20('100.64.6.20','100.64.7.20','63',{},{stripped:true}),ICMP_20('echo_request',{stripped:true})],
+      `<strong>LSR1</strong> swaps 150→250 — <em>identical to VRF 10</em>. VPN label 1200 is invisible to LSR1.
+      <div class="compare-note"><strong>cf. VRF 10:</strong> Exact same swap (150→250). LSR1 has no idea this is VRF 20 traffic.</div>`),
+    action:'<strong>LSR1</strong> swap 150→250 (same as VRF 10). VRF-unaware.' },
+  { id:'lsr2-20', title:'LSR2 — Swap + GRE', badge:'Hop 4', activeNodes:['node-lsr2'], activeLinks:['link-lsr2-pesec'], dotPos:{x:575,y:285}, isVRF20:true,
+    wire:()=>wireHTML([ETH('⚡0x0800',{changed:true}),GRE_IP('★203.0.113.1','★203.0.113.2',{added:true}),GRE({added:true}),MPLS_T('⚡250 → 310','⚡62 → 61',{changed:true}),MPLS_V('1200','63'),IP4_20('100.64.6.20','100.64.7.20','63',{},{stripped:true}),ICMP_20('echo_request',{stripped:true})],
+      `<strong>LSR2</strong> swap 250→310 + GRE — <em>identical to VRF 10</em>. Same GRE tunnel for both VRFs.`),
+    action:'<strong>LSR2</strong> swap 250→310 + GRE. Same tunnel as VRF 10.' },
+  { id:'pesec-in-20', title:'PE-SEC — Decap → VRF 20', badge:'Hop 5', activeNodes:['node-pesec'], activeLinks:['link-pesec-fw'], dotPos:{x:470,y:358}, isVRF20:true,
+    wire:()=>wireHTML([ETH('0x0800',{stripped:true}),GRE_IP('203.0.113.1','203.0.113.2',{stripped:true}),GRE({stripped:true}),MPLS_T('310 → deag','—',{stripped:true}),MPLS_V('1200 → disp','★→ VRF 20',{stripped:true}),IP4_20('100.64.6.20','100.64.7.20','⚡63 → 62',{FIB:'★VRF 20'}),ICMP_20('echo_request')],
+      `PE-SEC strips headers. Label <strong style="color:var(--green)">1200</strong> → disposition into <strong>VRF 20</strong> (not VRF 10!). Route: 100.64.7.0/24 → FW (100.64.102.20).
+      <div class="compare-note"><strong>cf. VRF 10:</strong> Same deag label 310. But VPN 1200→VRF 20 (vs 1100→VRF 10). Different FW ingress interface.</div>`),
+    action:'<strong>PE-SEC</strong> 310 deag → <strong>1200 → VRF 20</strong>. Route to FW (100.64.102.20).' },
+  { id:'fw-20', title:'🔥 FW — VRF 20 Inspection', badge:'Hop 6', activeNodes:['node-fw'], activeLinks:['link-pesec-fw','link-fw-pesec'], dotPos:{x:405,y:365}, isFW:true, isVRF20:true,
+    wire:()=>wireHTML([ETH('0x0800'),L('fw','🔥 FW Inspection',{'In':'100.64.102.20 (VRF 20 iface)',VRF:'★VRF 20',Route:'0.0.0.0/0 → default','Out':'100.64.103.20 (VRF 20 iface)','Out-NH':'★100.64.103.1'}),IP4_20('100.64.6.20','100.64.7.20','⚡62 → 61'),ICMP_20('echo_request')],
+      `<strong style="color:var(--orange)">FW inspects in VRF 20.</strong> Different interfaces from VRF 10: ingress 100.64.102.x, egress 100.64.103.x. Egress → PE-SEC <strong>VRF 21</strong>.
+      <div class="compare-note"><strong>cf. VRF 10:</strong> VRF 10 uses host-eth2/eth3 (100.64.100.x/101.x). VRF 20 uses separate interface pair (100.64.102.x/103.x). Different FW VRF table. Same FW node, same routing pattern.</div>`),
+    action:'<strong>FW</strong> VRF 20 inspection. 100.64.102.20 → 100.64.103.20. TTL 62→61.' },
+  { id:'pesec-out-20', title:'PE-SEC VRF 21 — Re-encap', badge:'Hop 7', activeNodes:['node-pesec'], activeLinks:['link-fw-pesec','link-lsr2-pesec'], dotPos:{x:575,y:340}, isVRF20:true,
+    wire:()=>wireHTML([ETH('⚡0x0800',{changed:true}),GRE_IP('★203.0.113.2','★203.0.113.1',{added:true}),GRE({added:true}),MPLS_T('1500','60',{added:true}),MPLS_V('700','60',{added:true}),IP4_20('100.64.6.20','100.64.7.20','⚡61 → 60'),ICMP_20('echo_request')],
+      `PE-SEC <strong>VRF 21</strong> (egress for VRF 20): transport <strong style="color:var(--purple)">1500</strong> (same as VRF 10!) + VPN <strong style="color:var(--green)">700</strong> (PE2's VRF 20 label, vs 500 for VRF 10).
+      <div class="compare-note"><strong>cf. VRF 10:</strong> Transport 1500 identical (same path to PE2). VPN 700 vs 500 — PE2 uses different labels for VRF 20 vs VRF 10.</div>`),
+    action:'<strong>PE-SEC VRF 21</strong>: push [1500][<strong>700</strong>] + GRE. Same transport, different VPN.' },
+  { id:'lsr2-fwd-20', title:'LSR2 — GRE Decap + Swap', badge:'Hop 8', activeNodes:['node-lsr2'], activeLinks:['link-lsr2-pe2'], dotPos:{x:640,y:210}, isVRF20:true,
+    wire:()=>wireHTML([ETH('⚡0x8847',{changed:true}),GRE_IP('203.0.113.2','203.0.113.1',{stripped:true}),GRE({stripped:true}),MPLS_T('⚡1500 → 1501','⚡60 → 59',{changed:true}),MPLS_V('700','60'),IP4_20('100.64.6.20','100.64.7.20','60',{},{stripped:true}),ICMP_20('echo_request',{stripped:true})],
+      `LSR2 GRE decap + swap 1500→1501 — <em>identical to VRF 10</em>. P router still VRF-unaware.`),
+    action:'<strong>LSR2</strong> swap 1500→1501 (same as VRF 10).' },
+  { id:'pe2-20', title:'PE2 — Pop → VRF 20', badge:'Hop 9', activeNodes:['node-pe2'], activeLinks:['link-pe2-ce4'], dotPos:{x:780,y:140}, isVRF20:true,
+    wire:()=>wireHTML([ETH('⚡0x0800',{changed:true}),MPLS_T('1501 → pop','—',{stripped:true}),MPLS_V('700 → disp','★→ VRF 20',{stripped:true}),IP4_20('100.64.6.20','100.64.7.20','⚡60 → 59'),ICMP_20('echo_request')],
+      `<strong>PE2</strong> pops 1501 + <strong style="color:var(--green)">700</strong> → <strong>VRF 20</strong>. Label 700 tells PE2 this is VRF 20 traffic (vs 500 for VRF 10).
+      <div class="compare-note"><strong>cf. VRF 10:</strong> Same pop of 1501. But VPN 700→VRF 20 (vs 500→VRF 10). PE2 forwards to CE4 instead of CE2.</div>`),
+    action:'<strong>PE2</strong> pop → VRF 20. TTL 60→59. Forward to CE4.' },
+  { id:'ce4', title:'CE4 — Delivered ✓', badge:'Hop 10', activeNodes:['node-ce4'], activeLinks:[], dotPos:{x:845,y:80}, isVRF20:true,
+    wire:()=>wireHTML([ETH('0x0800'),IP4_20('100.64.6.20','100.64.7.20','★59'),ICMP_20('★echo_request')],
+      `<strong style="color:var(--green)">Delivered ✓</strong> TTL 64→59 = 5 IP decrements (PE1, PE-SEC, FW, PE-SEC, PE2).
+      <div class="compare-note"><strong>cf. VRF 10:</strong> TTL 64→57 (7 decrements). VRF 20 has 2 fewer hops because CE3/CE4 connect directly to PEs without intermediate hosts. <strong>Same MPLS core path, same FW, different VPN labels.</strong></div>`),
+    action:'<strong>Delivered.</strong> 10 hops, 5 IP decrements (64→59). Same MPLS path as VRF 10 ✓' },
+];
+
+/* ═══════════ VRF 20 RETURN (CE4→CE3) — 10 steps ═══════════ */
+const V20_RET = [
+  { id:'ce4r', title:'CE4 — Originate Reply', badge:'Hop 1', activeNodes:['node-ce4'], activeLinks:['link-pe2-ce4'], dotPos:{x:845,y:80}, isVRF20:true,
+    wire:()=>wireHTML([ETH('0x0800'),IP4_20('★100.64.7.20','★100.64.6.20','64'),ICMP_20('echo_reply')],'Return path. TTL=64.'),
+    action:'<strong>CE4</strong> echo_reply to CE3. Via PE2.' },
+  { id:'pe2r-20', title:'PE2 — MPLS Push (VRF 20)', badge:'Hop 2', activeNodes:['node-pe2'], activeLinks:['link-lsr2-pe2'], dotPos:{x:640,y:210}, isVRF20:true,
+    wire:()=>wireHTML([ETH('⚡0x8847',{changed:true}),MPLS_T('1300','63',{added:true}),MPLS_V('1200','63',{added:true}),IP4_20('100.64.7.20','100.64.6.20','⚡64 → 63'),ICMP_20('echo_reply')],
+      `PE2 pushes transport <strong style="color:var(--purple)">1300</strong> (same as VRF 10 return) + VPN <strong style="color:var(--green)">1200</strong> (PE-SEC VRF 20).
+      <div class="compare-note"><strong>cf. VRF 10 return:</strong> Same transport 1300. VPN 1200 vs 1100.</div>`),
+    action:'<strong>PE2</strong> VRF 20: push [1300][<strong>1200</strong>] via LSR2.' },
+  { id:'lsr2r-20', title:'LSR2 — Swap + GRE', badge:'Hop 3', activeNodes:['node-lsr2'], activeLinks:['link-lsr2-pesec'], dotPos:{x:575,y:285}, isVRF20:true,
+    wire:()=>wireHTML([ETH('⚡0x0800',{changed:true}),GRE_IP('★203.0.113.1','★203.0.113.2',{added:true}),GRE({added:true}),MPLS_T('⚡1300 → 310','⚡63 → 62',{changed:true}),MPLS_V('1200','63'),IP4_20('100.64.7.20','100.64.6.20','63',{},{stripped:true}),ICMP_20('echo_reply',{stripped:true})]),
+    action:'<strong>LSR2</strong> swap 1300→310 + GRE to PE-SEC.' },
+  { id:'pesecr-in-20', title:'PE-SEC — Decap → VRF 20', badge:'Hop 4', activeNodes:['node-pesec'], activeLinks:['link-pesec-fw'], dotPos:{x:470,y:358}, isVRF20:true,
+    wire:()=>wireHTML([ETH('0x0800',{stripped:true}),GRE_IP('203.0.113.1','203.0.113.2',{stripped:true}),GRE({stripped:true}),MPLS_T('310 → deag','—',{stripped:true}),MPLS_V('1200 → disp','★→ VRF 20',{stripped:true}),IP4_20('100.64.7.20','100.64.6.20','⚡63 → 62',{FIB:'★VRF 20'}),ICMP_20('echo_reply')]),
+    action:'<strong>PE-SEC</strong> 310 deag → 1200 → VRF 20 → FW.' },
+  { id:'fwr-20', title:'🔥 FW — VRF 20 Return', badge:'Hop 5', activeNodes:['node-fw'], activeLinks:['link-pesec-fw','link-fw-pesec'], dotPos:{x:405,y:365}, isFW:true, isVRF20:true,
+    wire:()=>wireHTML([ETH('0x0800'),L('fw','🔥 FW Inspection',{'In':'100.64.102.20',VRF:'★VRF 20',Route:'default','Out':'100.64.103.20','NH':'★100.64.103.1'}),IP4_20('100.64.7.20','100.64.6.20','⚡62 → 61'),ICMP_20('echo_reply')]),
+    action:'<strong>FW</strong> VRF 20 return inspection. TTL 62→61.' },
+  { id:'pesecr-out-20', title:'PE-SEC VRF 21 — Re-encap', badge:'Hop 6', activeNodes:['node-pesec'], activeLinks:['link-fw-pesec','link-lsr2-pesec'], dotPos:{x:575,y:340}, isVRF20:true,
+    wire:()=>wireHTML([ETH('⚡0x0800',{changed:true}),GRE_IP('★203.0.113.2','★203.0.113.1',{added:true}),GRE({added:true}),MPLS_T('1400','60',{added:true}),MPLS_V('800','60',{added:true}),IP4_20('100.64.7.20','100.64.6.20','⚡61 → 60'),ICMP_20('echo_reply')],
+      `PE-SEC VRF 21: transport <strong style="color:var(--purple)">1400</strong> + VPN <strong style="color:var(--green)">800</strong> (PE1's VRF 20 label, vs 600 for VRF 10).`),
+    action:'<strong>PE-SEC VRF 21</strong>: push [1400][<strong>800</strong>] + GRE.' },
+  { id:'lsr2r2-20', title:'LSR2 — GRE Decap + Swap', badge:'Hop 7', activeNodes:['node-lsr2'], activeLinks:['link-lsr1-lsr2'], dotPos:{x:510,y:210}, isVRF20:true,
+    wire:()=>wireHTML([ETH('⚡0x8847',{changed:true}),GRE_IP('203.0.113.2','203.0.113.1',{stripped:true}),GRE({stripped:true}),MPLS_T('⚡1400 → 1401','⚡60 → 59',{changed:true}),MPLS_V('800','60'),IP4_20('100.64.7.20','100.64.6.20','60',{},{stripped:true}),ICMP_20('echo_reply',{stripped:true})]),
+    action:'<strong>LSR2</strong> GRE decap → swap 1400→1401 → LSR1.' },
+  { id:'lsr1r-20', title:'LSR1 — Swap', badge:'Hop 8', activeNodes:['node-lsr1'], activeLinks:['link-pe1-lsr1'], dotPos:{x:385,y:210}, isVRF20:true,
+    wire:()=>wireHTML([ETH('0x8847'),MPLS_T('⚡1401 → 1402','⚡59 → 58',{changed:true}),MPLS_V('800','60'),IP4_20('100.64.7.20','100.64.6.20','60',{},{stripped:true}),ICMP_20('echo_reply',{stripped:true})]),
+    action:'<strong>LSR1</strong> swap 1401→1402 → PE1.' },
+  { id:'pe1r-20', title:'PE1 — Pop → VRF 20', badge:'Hop 9', activeNodes:['node-pe1'], activeLinks:['link-ce3-pe1'], dotPos:{x:250,y:140}, isVRF20:true,
+    wire:()=>wireHTML([ETH('⚡0x0800',{changed:true}),MPLS_T('1402 → pop','—',{stripped:true}),MPLS_V('800 → disp','★→ VRF 20',{stripped:true}),IP4_20('100.64.7.20','100.64.6.20','⚡60 → 59'),ICMP_20('echo_reply')],
+      `PE1 pops 1402 + <strong style="color:var(--green)">800</strong> → VRF 20. Label 800 vs 600 (VRF 10).`),
+    action:'<strong>PE1</strong> pop 1402+800 → VRF 20. TTL 60→59.' },
+  { id:'ce3r', title:'CE3 — Reply ✓', badge:'Hop 10', activeNodes:['node-ce3'], activeLinks:[], dotPos:{x:185,y:80}, isVRF20:true,
+    wire:()=>wireHTML([ETH('0x0800'),IP4_20('100.64.7.20','100.64.6.20','★59'),ICMP_20('★echo_reply')],
+      `<strong style="color:var(--green)">Round-trip complete ✓</strong> TTL 64→59 (5 decrements).
+      <div class="compare-note"><strong>cf. VRF 10 return:</strong> Labels PE2[1300][1100]→LSR2[310]+GRE→PE-SEC→FW→PE-SEC[1400][600]+GRE→LSR2[1401]→LSR1[1402]→PE1. <strong>Same transport labels, different VPN labels (1100/600 vs 1200/800).</strong></div>`),
+    action:'<strong>Delivered.</strong> VRF 20 round-trip complete. Same path, different VPN labels ✓' },
+];
+
+/* ═══════════ UI State ═══════════ */
+let curVRF = 10, curDir = 'fwd', curStep = 0, autoTimer = null;
+
+const STEPS = { '10-fwd':V10_FWD, '10-ret':V10_RET, '20-fwd':V20_FWD, '20-ret':V20_RET };
+function getSteps() { return STEPS[curVRF+'-'+curDir]; }
+
+function setVRF(v) {
+  curVRF = v; curStep = 0; stopAuto();
+  document.querySelectorAll('.vrf-btn').forEach(b => b.className = 'vrf-btn' + (v===10?' active-10':v===20?' active-20':''));
+  renderStep();
+}
+function setDir(d) {
+  curDir = d; curStep = 0; stopAuto();
+  document.getElementById('fwdBtn').classList.toggle('active', d==='fwd');
+  document.getElementById('retBtn').classList.toggle('active', d==='ret');
+  renderStep();
+}
+
+function renderStep() {
+  const steps = getSteps(), step = steps[curStep];
+  const is20 = curVRF === 20;
+
+  document.getElementById('stepIndicator').textContent =
+    `VRF ${curVRF} — Step ${curStep+1} of ${steps.length} — ${step.title}`;
+  document.getElementById('prevBtn').disabled = curStep === 0;
+  document.getElementById('nextBtn').disabled = curStep === steps.length - 1;
+
+  // Topology highlights
+  document.querySelectorAll('.node').forEach(n => n.classList.remove('active','active-fw','active-20'));
+  document.querySelectorAll('.link').forEach(l => l.classList.remove('active','active-20'));
+  step.activeNodes.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add(step.isFW ? 'active-fw' : (is20 ? 'active-20' : 'active'));
+  });
+  step.activeLinks.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add(is20 ? 'active-20' : 'active');
+  });
+
+  // Packet dot
+  const dot = document.getElementById('packetDot');
+  dot.classList.add('visible');
+  dot.setAttribute('cx', step.dotPos.x);
+  dot.setAttribute('cy', step.dotPos.y);
+  dot.style.fill = step.isFW ? 'var(--orange)' : (is20 ? 'var(--pink)' : 'var(--accent)');
+
+  // Detail panel
+  const hdr = document.getElementById('detailHeader');
+  hdr.className = 'detail-header' + (is20 ? ' vrf20' : '');
+  document.getElementById('detailTitle').textContent = step.title;
+  document.getElementById('hopBadge').textContent = step.badge;
+
+  let html = step.wire();
+  html += `<div class="pkt-section"><h4>VPP Action at this Hop</h4>
+    <div class="action-desc${is20?' vrf20':''}">${step.action}</div></div>`;
+  document.getElementById('detailBody').innerHTML = html;
+}
+
+function nextStep() { const s=getSteps(); if(curStep<s.length-1){curStep++;renderStep();} }
+function prevStep() { if(curStep>0){curStep--;renderStep();} }
+
+function goToNode(nodeId) {
+  const steps = getSteps();
+  const idx = steps.findIndex(s => s.activeNodes.includes(nodeId));
+  if (idx >= 0) { curStep = idx; stopAuto(); renderStep(); }
+}
+
+function autoPlay() {
+  if (autoTimer) { stopAuto(); return; }
+  curStep = 0; renderStep();
+  autoTimer = setInterval(() => {
+    const s = getSteps();
+    if (curStep < s.length-1) { curStep++; renderStep(); } else stopAuto();
+  }, 2500);
+}
+function stopAuto() { if(autoTimer){clearInterval(autoTimer);autoTimer=null;} }
+
+function toggleTrace(id) {
+  document.getElementById('body-'+id).classList.toggle('open');
+  document.getElementById('toggle-'+id).classList.toggle('open');
+}
+
+/* ═══════════ Route / LFIB Popup ═══════════ */
+const ROUTE_DATA = {
+  'host1': {
+    title: 'host1 — Linux Host (VRF 10 source)',
+    sections: [
+      { title: '🖥️ Interfaces', body: `eth0  10.1.1.10/24  (connected to CE1 host-eth1)` },
+      { title: '🛣️ Routing Table', body: `default via <span class="rp-hl">10.1.1.1</span> dev eth0  ← CE1 LAN gateway
+10.1.1.0/24 dev eth0 scope link` }
+    ]
+  },
+  'host2': {
+    title: 'host2 — Linux Host (VRF 10 destination)',
+    sections: [
+      { title: '🖥️ Interfaces', body: `eth0  10.1.2.10/24  (connected to CE2 host-eth1)` },
+      { title: '🛣️ Routing Table', body: `default via <span class="rp-hl">10.1.2.1</span> dev eth0  ← CE2 LAN gateway
+10.1.2.0/24 dev eth0 scope link` }
+    ]
+  },
+  'host3': {
+    title: 'host3 — Linux Host (VRF 20 source)',
+    sections: [
+      { title: '🖥️ Interfaces', body: `eth0  10.2.1.10/24  (connected to CE3 host-eth0)` },
+      { title: '🛣️ Routing Table', body: `default via <span class="rp-hl">10.2.1.1</span> dev eth0  ← CE3 LAN gateway
+10.2.1.0/24 dev eth0 scope link` }
+    ]
+  },
+  'host4': {
+    title: 'host4 — Linux Host (VRF 20 destination)',
+    sections: [
+      { title: '🖥️ Interfaces', body: `eth0  10.2.2.10/24  (connected to CE4 host-eth0)` },
+      { title: '🛣️ Routing Table', body: `default via <span class="rp-hl">10.2.2.1</span> dev eth0  ← CE4 LAN gateway
+10.2.2.0/24 dev eth0 scope link` }
+    ]
+  },
+  'ce1': {
+    title: 'CE1 — Customer Edge (VRF 10, PE1 side)',
+    sections: [
+      { title: '🖥️ VPP Interfaces', body: `host-eth0  <span class="rp-hl">100.64.1.20</span>/24  ← uplink to PE1 (eBGP peering)
+host-eth1  <span class="rp-hl">10.1.1.1</span>/24       ← LAN toward host1` },
+      { title: '🛣️ VPP IP FIB (show ip fib)', body: `<span class="rp-hl">0.0.0.0/0</span>      via 100.64.1.10 host-eth0  ← default to PE1
+10.1.1.0/24    glean host-eth1                ← connected LAN
+10.1.1.10/32   via 10.1.1.10 host-eth1        ← ARP-resolved host1` },
+      { title: '📡 FRR eBGP', body: `router bgp 65001
+  neighbor 100.64.1.10 remote-as <span class="rp-hl">65000</span> (PE1)
+  advertises: 10.1.1.0/24 (connected LAN)` }
+    ]
+  },
+  'ce2': {
+    title: 'CE2 — Customer Edge (VRF 10, PE2 side)',
+    sections: [
+      { title: '🖥️ VPP Interfaces', body: `host-eth0  <span class="rp-hl">100.64.5.20</span>/24  ← uplink to PE2 (eBGP peering)
+host-eth1  <span class="rp-hl">10.1.2.1</span>/24       ← LAN toward host2` },
+      { title: '🛣️ VPP IP FIB', body: `<span class="rp-hl">0.0.0.0/0</span>      via 100.64.5.10 host-eth0  ← default to PE2
+10.1.2.0/24    glean host-eth1                ← connected LAN
+10.1.2.10/32   via 10.1.2.10 host-eth1        ← ARP-resolved host2` },
+      { title: '📡 FRR eBGP', body: `router bgp 65002
+  neighbor 100.64.5.10 remote-as <span class="rp-hl">65000</span> (PE2)
+  advertises: 10.1.2.0/24 (connected LAN)` }
+    ]
+  },
+  'ce3': {
+    title: 'CE3 — Customer Edge (VRF 20, PE1 side)',
+    sections: [
+      { title: '🖥️ VPP Interfaces', body: `host-eth0  <span class="rp-hl">10.2.1.1</span>/24       ← LAN toward host3
+host-eth1  <span class="rp-hl">100.64.6.20</span>/24  ← uplink to PE1 (eBGP peering)` },
+      { title: '🛣️ VPP IP FIB', body: `<span class="rp-hl">0.0.0.0/0</span>      via 100.64.6.10 host-eth1  ← default to PE1
+10.2.1.0/24    glean host-eth0                ← connected LAN` },
+      { title: '📡 FRR eBGP', body: `router bgp 65003
+  neighbor 100.64.6.10 remote-as <span class="rp-hl">65000</span> (PE1)
+  advertises: 10.2.1.0/24 (connected LAN)` }
+    ]
+  },
+  'ce4': {
+    title: 'CE4 — Customer Edge (VRF 20, PE2 side)',
+    sections: [
+      { title: '🖥️ VPP Interfaces', body: `host-eth0  <span class="rp-hl">10.2.2.1</span>/24       ← LAN toward host4
+host-eth1  <span class="rp-hl">100.64.7.20</span>/24  ← uplink to PE2 (eBGP peering)` },
+      { title: '🛣️ VPP IP FIB', body: `<span class="rp-hl">0.0.0.0/0</span>      via 100.64.7.10 host-eth1  ← default to PE2
+10.2.2.0/24    glean host-eth0                ← connected LAN` },
+      { title: '📡 FRR eBGP', body: `router bgp 65004
+  neighbor 100.64.7.10 remote-as <span class="rp-hl">65000</span> (PE2)
+  advertises: 10.2.2.0/24 (connected LAN)` }
+    ]
+  },
+  'pe1': {
+    title: 'PE1 — Provider Edge (AS 65000)',
+    sections: [
+      { title: '🖥️ VPP Interfaces', body: `host-eth1  <span class="rp-hl">100.64.1.10</span>/24   table <span class="rp-hl">10</span>  ← CE1 (VRF 10)
+host-eth2  <span class="rp-hl">100.64.6.10</span>/24   table <span class="rp-hl">20</span>  ← CE3 (VRF 20)
+host-eth3  100.64.6.10/24   table 30  ← CE5 (VRF 30)
+host-eth4  <span class="rp-hl">100.64.2.10</span>/24   default   ← core toward LSR1
+loop0      10.255.0.1/32              ← BGP router-id` },
+      { title: '🛣️ VRF 10 IP FIB — Key Routes', body: `10.1.1.0/24   via <span class="rp-hl">100.64.1.20</span> host-eth1        ← to CE1 (connected)
+10.1.2.0/24   mpls-label  <span class="rp-lbl">[150:neos]</span><span class="rp-vpn">[1100:eos]</span>  ← <span class="rp-hl">MPLS push to PE-SEC</span>
+                via 100.64.2.20 host-eth4
+10.100.1.0/24 mpls-label  <span class="rp-lbl">[150:neos]</span><span class="rp-vpn">[1100:eos]</span>
+                via 100.64.2.20 host-eth4` },
+      { title: '🛣️ VRF 20 IP FIB — Key Routes', body: `10.2.1.0/24   via <span class="rp-hl">100.64.6.20</span> host-eth2        ← to CE3 (connected)
+10.2.2.0/24   mpls-label  <span class="rp-lbl">[150:neos]</span><span class="rp-vpn">[1200:eos]</span>  ← <span class="rp-hl">MPLS push to PE-SEC</span>
+                via 100.64.2.20 host-eth4
+
+<span style="color:var(--orange)">★ Same transport label 150, different VPN labels (1100 vs 1200)</span>` },
+      { title: '📡 FRR MP-iBGP VPNv4', body: `router bgp 65000
+  neighbor 10.255.0.3 (PE-SEC) — MP-iBGP VPNv4
+  VRF 10: RD 65000:10, import/export RT 65000:10
+  VRF 20: RD 65000:20, import/export RT 65000:20` }
+    ]
+  },
+  'pe2': {
+    title: 'PE2 — Provider Edge (AS 65000)',
+    sections: [
+      { title: '🖥️ VPP Interfaces', body: `host-eth2  <span class="rp-hl">100.64.4.20</span>/24   default   ← core toward LSR2
+host-eth3  <span class="rp-hl">100.64.5.10</span>/24   table <span class="rp-hl">10</span>  ← CE2 (VRF 10)
+host-eth4  <span class="rp-hl">100.64.7.10</span>/24   table <span class="rp-hl">20</span>  ← CE4 (VRF 20)
+host-eth0  100.64.7.10/24   table 30  ← CE6 (VRF 30)
+loop0      10.255.0.2/32              ← BGP router-id` },
+      { title: '🛣️ VRF 10 IP FIB — Key Routes', body: `10.1.2.0/24   via <span class="rp-hl">100.64.5.20</span> host-eth3        ← to CE2 (connected)
+10.1.1.0/24   mpls-label  <span class="rp-lbl">[label:neos]</span><span class="rp-vpn">[VPN:eos]</span>
+                via 100.64.4.10 host-eth2          ← to LSR2` },
+      { title: '🛣️ VRF 20 IP FIB — Key Routes', body: `10.2.2.0/24   via <span class="rp-hl">100.64.7.20</span> host-eth4        ← to CE4 (connected)
+10.2.1.0/24   mpls-label  <span class="rp-lbl">[label:neos]</span><span class="rp-vpn">[VPN:eos]</span>
+                via 100.64.4.10 host-eth2          ← to LSR2` }
+    ]
+  },
+  'lsr1': {
+    title: 'LSR1 — P Router (Label Switch Router)',
+    sections: [
+      { title: '🖥️ VPP Interfaces', body: `host-eth0  <span class="rp-hl">100.64.3.10</span>/24   ← toward LSR2
+host-eth1  <span class="rp-hl">100.64.2.20</span>/24   ← toward PE1` },
+      { title: '🏷️ MPLS LFIB (show mpls fib)', body: `<span class="rp-lbl">150</span>:neos  → swap <span class="rp-lbl">250</span>  via <span class="rp-hl">100.64.3.20</span> host-eth0  ← to LSR2
+
+<span style="color:var(--orange)">★ LSR1 only swaps the TRANSPORT label.
+  It never sees the VPN label underneath (1100 or 1200).
+  Same swap operation for ALL VRFs!</span>` },
+      { title: '📡 FRR LDP', body: `mpls ldp
+  router-id 100.64.2.20
+  Binds label 150 for prefix 10.255.0.3/32 (PE-SEC loopback)
+  Distributes via LDP to PE1 and LSR2` }
+    ]
+  },
+  'lsr2': {
+    title: 'LSR2 — P Router + GRE Endpoint',
+    sections: [
+      { title: '🖥️ VPP Interfaces', body: `host-eth0  <span class="rp-gre">203.0.113.1</span>/24   ← toward PE-SEC (GRE underlay)
+host-eth1  <span class="rp-hl">100.64.3.20</span>/24    ← toward LSR1
+host-eth2  <span class="rp-hl">100.64.4.10</span>/24    ← toward PE2
+<span class="rp-gre">gre0</span>       <span class="rp-gre">172.16.0.1</span>/30     ← GRE tunnel to PE-SEC (203.0.113.2)` },
+      { title: '🏷️ MPLS LFIB (show mpls fib)', body: `<span class="rp-lbl">250</span>:neos  → swap <span class="rp-lbl">310</span>  via <span class="rp-gre">gre0</span>      ← into GRE tunnel
+                  stacked-on: ipv4 via <span class="rp-gre">203.0.113.2</span> host-eth0
+
+<span style="color:var(--orange)">★ LSR2 swaps 250→310 AND encapsulates into GRE tunnel.
+  On wire: [Eth][IP:203.0.113.1→.2][GRE][MPLS:310][MPLS:VPN][IPv4]</span>` },
+      { title: '📡 FRR LDP', body: `mpls ldp
+  router-id 100.64.3.20
+  Binds label 250 for prefix 10.255.0.3/32
+  Static MPLS config: label 310 allocated for GRE tunnel` }
+    ]
+  },
+  'pe-sec': {
+    title: 'PE-SEC — Security PE (VRF split + GRE termination)',
+    sections: [
+      { title: '🖥️ VPP Interfaces', body: `<span class="rp-gre">gre0</span>       <span class="rp-gre">172.16.0.2</span>/30     ← GRE tunnel from LSR2
+host-eth2  <span class="rp-gre">203.0.113.2</span>/24   ← GRE underlay
+host-eth4  <span class="rp-hl">100.64.100.1</span>/24  table <span class="rp-hl">10</span>  ← FW ingress (VRF 10)
+host-eth5  100.64.101.1/24  table <span class="rp-hl">11</span>  ← FW egress  (VRF 11)
+host-eth6  <span class="rp-hl">100.64.102.1</span>/24  table <span class="rp-hl">20</span>  ← FW ingress (VRF 20)
+host-eth7  100.64.103.1/24  table <span class="rp-hl">21</span>  ← FW egress  (VRF 21)
+host-eth0  100.64.104.1/24  table 30  ← FW ingress (VRF 30)
+host-eth1  100.64.105.1/24  table 31  ← FW egress  (VRF 31)
+loop0      10.255.0.3/32              ← BGP router-id` },
+      { title: '🏷️ MPLS LFIB — VPN Label Disposition', body: `<span class="rp-lbl">310</span>:neos    → deag (strip transport label)
+
+<span class="rp-vpn">1100</span>:eos    → disposition into <span class="rp-hl">ipv4-VRF:10</span> (fib 1)
+<span class="rp-vpn">1200</span>:eos    → disposition into <span class="rp-hl">ipv4-VRF:20</span> (fib 2)
+<span class="rp-vpn">1250</span>:eos    → disposition into ipv4-VRF:30 (fib 3)
+
+<span style="color:var(--orange)">★ This is the KEY demux point:
+  Same GRE tunnel → same label 310 → but different VPN labels
+  → packets delivered into separate VRF FIBs → separate FW interfaces</span>` },
+      { title: '🛣️ VRF 10 routes to FW', body: `0.0.0.0/0 table 10  via <span class="rp-fw">100.64.100.20</span> host-eth4  ← into FW
+(VRF 11 receives inspected traffic back from FW at 100.64.101.20)` },
+      { title: '🛣️ VRF 20 routes to FW', body: `0.0.0.0/0 table 20  via <span class="rp-fw">100.64.102.20</span> host-eth6  ← into FW
+(VRF 21 receives inspected traffic back from FW at 100.64.103.20)` }
+    ]
+  },
+  'fw': {
+    title: 'FW — Inline Firewall (VPP, AS 65010)',
+    sections: [
+      { title: '🖥️ VPP Interfaces (per-VRF in/out)', body: `<span class="rp-fw">VRF 10:</span>
+  host-eth1  <span class="rp-hl">100.64.100.20</span>/24  table 10  ← <span class="rp-fw">ingress</span> from PE-SEC VRF 10
+  host-eth2  <span class="rp-hl">100.64.101.20</span>/24  table 10  ← <span class="rp-fw">egress</span>  to PE-SEC VRF 11
+  host-eth0  10.100.1.1/24      table 10  ← sec-host LAN
+
+<span class="rp-fw">VRF 20:</span>
+  host-eth3  <span class="rp-hl">100.64.102.20</span>/24  table 20  ← <span class="rp-fw">ingress</span> from PE-SEC VRF 20
+  host-eth4  <span class="rp-hl">100.64.103.20</span>/24  table 20  ← <span class="rp-fw">egress</span>  to PE-SEC VRF 21
+
+<span class="rp-fw">VRF 30:</span>
+  host-eth5  100.64.104.20/24  table 30  ← ingress from PE-SEC VRF 30
+  host-eth6  100.64.105.20/24  table 30  ← egress  to PE-SEC VRF 31` },
+      { title: '🛣️ VPP Routing (default routes per VRF)', body: `<span class="rp-fw">VRF 10:</span> 0.0.0.0/0 via <span class="rp-hl">100.64.101.1</span> host-eth2  ← to PE-SEC VRF 11
+<span class="rp-fw">VRF 20:</span> 0.0.0.0/0 via <span class="rp-hl">100.64.103.1</span> host-eth4  ← to PE-SEC VRF 21
+<span class="rp-fw">VRF 30:</span> 0.0.0.0/0 via 100.64.105.1 host-eth6  ← to PE-SEC VRF 31
+
+<span style="color:var(--orange)">★ FW uses default routes — it doesn't need specific customer routes.
+  Packets arrive on ingress iface → FIB lookup in VRF table → egress iface.
+  L3 forwarding only (no NAT, no deep inspection in this lab).</span>` },
+      { title: '📡 FRR eBGP (per-VRF peering with PE-SEC)', body: `router bgp 65010 vrf VRF10
+  neighbor 100.64.100.1 remote-as 65000 (PE-SEC)
+  advertises: 100.64.100.0/24, 100.64.101.0/24, 10.100.1.0/24
+
+router bgp 65010 vrf VRF20
+  neighbor 100.64.102.1 remote-as 65000 (PE-SEC)
+  advertises: 100.64.102.0/24, 100.64.103.0/24` }
+    ]
+  }
+};
+
+function showRoutes(node) {
+  const data = ROUTE_DATA[node];
+  if (!data) return;
+  const popup = document.getElementById('routePopup');
+  document.getElementById('routePopupTitle').textContent = data.title;
+  document.getElementById('routePopupBody').innerHTML = data.sections.map(s =>
+    `<div class="rp-section"><div class="rp-title">${s.title}</div>${s.body}</div>`
+  ).join('');
+  popup.classList.add('open');
+}
+function closeRoutePopup() {
+  document.getElementById('routePopup').classList.remove('open');
+}
+
+document.addEventListener('keydown', e => {
+  if(e.key==='Escape') closeRoutePopup();
+  if(e.key==='ArrowRight'||e.key==='n') nextStep();
+  if(e.key==='ArrowLeft'||e.key==='p') prevStep();
+  if(e.key===' '){e.preventDefault();autoPlay();}
+  if(e.key==='1') setVRF(10);
+  if(e.key==='2') setVRF(20);
+});
+
+renderStep();
+</script>
+
+<!-- Route/LFIB popup overlay -->
+<div id="routePopup" onclick="if(event.target===this)closeRoutePopup()">
+  <div class="route-popup-inner">
+    <div class="route-popup-hdr">
+      <h3 id="routePopupTitle"></h3>
+      <button class="route-popup-close" onclick="closeRoutePopup()">✕ Close</button>
+    </div>
+    <div class="route-popup-body" id="routePopupBody"></div>
+  </div>
+</div>
+
+</body>
+</html>

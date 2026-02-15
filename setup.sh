@@ -85,6 +85,7 @@ vpp_exec ce1 "create host-interface name eth1"
 
 echo "CE3..."
 vpp_exec ce3 "create host-interface name eth0"
+vpp_exec ce3 "create host-interface name eth1"
 
 echo "CE5..."
 vpp_exec ce5 "create host-interface name eth0"
@@ -118,6 +119,7 @@ vpp_exec ce2 "create host-interface name eth1"
 
 echo "CE4..."
 vpp_exec ce4 "create host-interface name eth0"
+vpp_exec ce4 "create host-interface name eth1"
 
 echo "CE6..."
 vpp_exec ce6 "create host-interface name eth0"
@@ -126,10 +128,20 @@ echo "PE-SEC..."
 vpp_exec pe-sec "create host-interface name eth0"
 vpp_exec pe-sec "create host-interface name eth1"
 vpp_exec pe-sec "create host-interface name eth2"
+vpp_exec pe-sec "create host-interface name eth3"
+vpp_exec pe-sec "create host-interface name eth4"
+vpp_exec pe-sec "create host-interface name eth5"
+vpp_exec pe-sec "create host-interface name eth6"
+vpp_exec pe-sec "create host-interface name eth7"
 
 echo "FW..."
 vpp_exec fw "create host-interface name eth0"
 vpp_exec fw "create host-interface name eth1"
+vpp_exec fw "create host-interface name eth2"
+vpp_exec fw "create host-interface name eth3"
+vpp_exec fw "create host-interface name eth4"
+vpp_exec fw "create host-interface name eth5"
+vpp_exec fw "create host-interface name eth6"
 
 echo ""
 echo "============================================"
@@ -137,7 +149,7 @@ echo "  Syncing VPP MAC with Linux MAC"
 echo "============================================"
 echo "  (Fix af-packet l3 mac mismatch drops)"
 for node in ce1 ce3 ce5 pe1 lsr1 lsr2 pe2 ce2 ce4 ce6 pe-sec fw; do
-  for iface in eth0 eth1 eth2 eth3 eth4; do
+  for iface in eth0 eth1 eth2 eth3 eth4 eth5 eth6 eth7; do
     if docker exec -i "$node" ip link show "$iface" > /dev/null 2>&1; then
       sync_mac "$node" "$iface"
     fi
@@ -164,6 +176,16 @@ CE1_PE=$(get_iface ce1 "100.64.1.")
 CE1_LAN=$(get_iface ce1 "10.1.1.")
 echo "  CE1: PE=host-$CE1_PE, LAN=host-$CE1_LAN"
 
+# CE3: 2 interfaces (PE-facing + LAN-facing)
+CE3_PE=$(get_iface ce3 "100.64.6.")
+CE3_LAN=$(get_iface ce3 "10.2.1.")
+echo "  CE3: PE=host-$CE3_PE, LAN=host-$CE3_LAN"
+
+# CE4: 2 interfaces (PE-facing + LAN-facing)
+CE4_PE=$(get_iface ce4 "100.64.7.")
+CE4_LAN=$(get_iface ce4 "10.2.2.")
+echo "  CE4: PE=host-$CE4_PE, LAN=host-$CE4_LAN"
+
 # LSR1: 2 interfaces
 LSR1_PE1=$(get_iface lsr1 "100.64.2.")
 LSR1_LSR2=$(get_iface lsr1 "100.64.3.")
@@ -188,16 +210,30 @@ CE2_PE=$(get_iface ce2 "100.64.5.")
 CE2_LAN=$(get_iface ce2 "10.1.2.")
 echo "  CE2: PE=host-$CE2_PE, LAN=host-$CE2_LAN"
 
-# PE-SEC: 3 interfaces (GRE transport + sec_lan + mgmt)
+# PE-SEC: 8 interfaces (GRE transport + 6 FW links + mgmt)
 PESEC_GRE=$(get_iface pe-sec "203.0.113.")
-PESEC_SEC=$(get_iface pe-sec "100.64.100.")
+PESEC_SEC=$(get_iface pe-sec "100.64.100.")       # VRF 10 ingress (FW-facing)
+PESEC_VRF10_OUT=$(get_iface pe-sec "100.64.101.")  # VRF 10 egress (FW-facing)
+PESEC_VRF20_IN=$(get_iface pe-sec "100.64.102.")   # VRF 20 ingress (FW-facing)
+PESEC_VRF20_OUT=$(get_iface pe-sec "100.64.103.")  # VRF 20 egress (FW-facing)
+PESEC_VRF30_IN=$(get_iface pe-sec "100.64.104.")   # VRF 30 ingress (FW-facing)
+PESEC_VRF30_OUT=$(get_iface pe-sec "100.64.105.")  # VRF 30 egress (FW-facing)
 PESEC_MGMT=$(get_iface pe-sec "10.255.0.")
-echo "  PE-SEC: GRE=host-$PESEC_GRE, SecLAN=host-$PESEC_SEC, Mgmt=$PESEC_MGMT"
+echo "  PE-SEC: GRE=host-$PESEC_GRE, VRF10-in=host-$PESEC_SEC, VRF10-out=host-$PESEC_VRF10_OUT"
+echo "          VRF20-in=host-$PESEC_VRF20_IN, VRF20-out=host-$PESEC_VRF20_OUT"
+echo "          VRF30-in=host-$PESEC_VRF30_IN, VRF30-out=host-$PESEC_VRF30_OUT, Mgmt=$PESEC_MGMT"
 
-# FW: 2 interfaces (PE-SEC facing + LAN-facing)
-FW_PE=$(get_iface fw "100.64.100.")
+# FW: 7 interfaces (6 VRF in/out + sec-host LAN)
+FW_PE=$(get_iface fw "100.64.100.")                # VRF 10 ingress
+FW_VRF10_OUT=$(get_iface fw "100.64.101.")          # VRF 10 egress
+FW_VRF20_IN=$(get_iface fw "100.64.102.")           # VRF 20 ingress
+FW_VRF20_OUT=$(get_iface fw "100.64.103.")          # VRF 20 egress
+FW_VRF30_IN=$(get_iface fw "100.64.104.")           # VRF 30 ingress
+FW_VRF30_OUT=$(get_iface fw "100.64.105.")          # VRF 30 egress
 FW_LAN=$(get_iface fw "10.100.1.")
-echo "  FW: PE=host-$FW_PE, LAN=host-$FW_LAN"
+echo "  FW: VRF10-in=host-$FW_PE, VRF10-out=host-$FW_VRF10_OUT"
+echo "      VRF20-in=host-$FW_VRF20_IN, VRF20-out=host-$FW_VRF20_OUT"
+echo "      VRF30-in=host-$FW_VRF30_IN, VRF30-out=host-$FW_VRF30_OUT, LAN=host-$FW_LAN"
 
 echo ""
 echo "============================================"
@@ -206,7 +242,7 @@ echo "============================================"
 echo "  (Skipping management interfaces on PEs)"
 for node in ce1 ce3 ce5 pe1 lsr1 lsr2 pe2 ce2 ce4 ce6 pe-sec fw; do
   echo "  Flushing $node..."
-  for iface in eth0 eth1 eth2 eth3 eth4; do
+  for iface in eth0 eth1 eth2 eth3 eth4 eth5 eth6 eth7; do
     # Skip the management interface on PEs (used for iBGP peering)
     if [[ "$node" == "pe1" && "$iface" == "$PE1_MGMT" ]]; then continue; fi
     if [[ "$node" == "pe2" && "$iface" == "$PE2_MGMT" ]]; then continue; fi
@@ -235,11 +271,16 @@ echo ""
 echo "============================================"
 echo "  Configuring CE3 (VRF 20, PE1 side)"
 echo "============================================"
-vpp_exec ce3 "set interface state host-eth0 up"
-vpp_exec ce3 "set interface ip address host-eth0 100.64.6.20/24"
+vpp_exec ce3 "set interface state host-$CE3_PE up"
+vpp_exec ce3 "set interface ip address host-$CE3_PE 100.64.6.20/24"
 vpp_exec ce3 "ip route add 0.0.0.0/0 via 100.64.6.10"
-docker exec -i ce3 ip addr add 100.64.6.20/24 dev eth0 2>/dev/null || true
+# LAN-side interface (toward host3)
+vpp_exec ce3 "set interface state host-$CE3_LAN up"
+vpp_exec ce3 "set interface ip address host-$CE3_LAN 10.2.1.1/24"
+docker exec -i ce3 ip addr add 100.64.6.20/24 dev $CE3_PE 2>/dev/null || true
 docker exec -i ce3 ip route add default via 100.64.6.10 2>/dev/null || true
+# Linux side for LAN (so FRR can see connected 10.2.1.0/24)
+docker exec -i ce3 ip addr add 10.2.1.1/24 dev $CE3_LAN 2>/dev/null || true
 
 echo ""
 echo "============================================"
@@ -271,11 +312,16 @@ echo ""
 echo "============================================"
 echo "  Configuring CE4 (VRF 20, PE2 side)"
 echo "============================================"
-vpp_exec ce4 "set interface state host-eth0 up"
-vpp_exec ce4 "set interface ip address host-eth0 100.64.7.20/24"
+vpp_exec ce4 "set interface state host-$CE4_PE up"
+vpp_exec ce4 "set interface ip address host-$CE4_PE 100.64.7.20/24"
 vpp_exec ce4 "ip route add 0.0.0.0/0 via 100.64.7.10"
-docker exec -i ce4 ip addr add 100.64.7.20/24 dev eth0 2>/dev/null || true
+# LAN-side interface (toward host4)
+vpp_exec ce4 "set interface state host-$CE4_LAN up"
+vpp_exec ce4 "set interface ip address host-$CE4_LAN 10.2.2.1/24"
+docker exec -i ce4 ip addr add 100.64.7.20/24 dev $CE4_PE 2>/dev/null || true
 docker exec -i ce4 ip route add default via 100.64.7.10 2>/dev/null || true
+# Linux side for LAN (so FRR can see connected 10.2.2.0/24)
+docker exec -i ce4 ip addr add 10.2.2.1/24 dev $CE4_LAN 2>/dev/null || true
 
 echo ""
 echo "============================================"
@@ -335,12 +381,18 @@ vpp_exec pe1 "mpls local-label 800 eos via ip4-lookup-in-table 20"
 vpp_exec pe1 "mpls local-label 1000 eos via ip4-lookup-in-table 30"
 
 # --- Forward path VPN routes (static) ---
-# Remote routes via MPLS to PE2:
-vpp_exec pe1 "ip route add 100.64.5.0/24 table 10 via 100.64.2.20 host-$PE1_CORE out-labels 100 500"
-vpp_exec pe1 "ip route add 10.1.2.0/24 table 10 via 100.64.2.20 host-$PE1_CORE out-labels 100 500"
-vpp_exec pe1 "ip route add 100.64.7.0/24 table 20 via 100.64.2.20 host-$PE1_CORE out-labels 100 700"
-vpp_exec pe1 "ip route add 100.64.7.0/24 table 30 via 100.64.2.20 host-$PE1_CORE out-labels 100 900"
-# Remote routes via MPLS to PE-SEC (through LSR1→LSR2→GRE):
+# ALL remote CE routes go via PE-SEC for inline FW inspection:
+# VRF 10: remote CE2/host2 subnets via PE-SEC
+vpp_exec pe1 "ip route add 100.64.5.0/24 table 10 via 100.64.2.20 host-$PE1_CORE out-labels 150 1100"
+vpp_exec pe1 "ip route add 10.1.2.0/24 table 10 via 100.64.2.20 host-$PE1_CORE out-labels 150 1100"
+# VRF 20: remote CE4 subnet via PE-SEC
+vpp_exec pe1 "ip route add 100.64.7.0/24 table 20 via 100.64.2.20 host-$PE1_CORE out-labels 150 1200"
+vpp_exec pe1 "ip route add 10.2.2.0/24 table 20 via 100.64.2.20 host-$PE1_CORE out-labels 150 1200"
+# Local CE3-connected LAN route (so PE1 can forward decapsulated MPLS traffic to CE3):
+vpp_exec pe1 "ip route add 10.2.1.0/24 table 20 via 100.64.6.20 host-$PE1_CE3"
+# VRF 30: remote CE6 subnet via PE-SEC
+vpp_exec pe1 "ip route add 100.64.7.0/24 table 30 via 100.64.2.20 host-$PE1_CORE out-labels 150 1250"
+# PE-SEC/FW direct subnets (VRF 10):
 vpp_exec pe1 "ip route add 100.64.100.0/24 table 10 via 100.64.2.20 host-$PE1_CORE out-labels 150 1100"
 vpp_exec pe1 "ip route add 10.100.1.0/24 table 10 via 100.64.2.20 host-$PE1_CORE out-labels 150 1100"
 # Local CE-connected LAN routes (so PE1 can forward decapsulated MPLS traffic to CEs):
@@ -373,6 +425,7 @@ docker exec -i pe1 ip link set "$PE1_CE5" master VRF30 2>/dev/null || true
 docker exec -i pe1 ip route add blackhole 10.1.2.0/24 vrf VRF10 2>/dev/null || true
 docker exec -i pe1 ip route add blackhole 10.100.1.0/24 vrf VRF10 2>/dev/null || true
 docker exec -i pe1 ip route add blackhole 100.64.100.0/24 vrf VRF10 2>/dev/null || true
+docker exec -i pe1 ip route add blackhole 10.2.2.0/24 vrf VRF20 2>/dev/null || true
 
 echo ""
 echo "============================================"
@@ -505,13 +558,18 @@ vpp_exec pe2 "mpls local-label 500 eos via ip4-lookup-in-table 10"
 vpp_exec pe2 "mpls local-label 700 eos via ip4-lookup-in-table 20"
 vpp_exec pe2 "mpls local-label 900 eos via ip4-lookup-in-table 30"
 
-# Return path: push transport + VPN labels toward PE1
-# Remote routes via MPLS to PE1:
-vpp_exec pe2 "ip route add 100.64.1.0/24 table 10 via 100.64.4.10 host-$PE2_CORE out-labels 400 600"
-vpp_exec pe2 "ip route add 10.1.1.0/24 table 10 via 100.64.4.10 host-$PE2_CORE out-labels 400 600"
-vpp_exec pe2 "ip route add 100.64.6.0/24 table 20 via 100.64.4.10 host-$PE2_CORE out-labels 400 800"
-vpp_exec pe2 "ip route add 100.64.6.0/24 table 30 via 100.64.4.10 host-$PE2_CORE out-labels 400 1000"
-# Remote routes via MPLS to PE-SEC (via LSR2→GRE):
+# Return path: push transport + VPN labels toward PE1 — ALL via PE-SEC (inline FW)
+# VRF 10: remote CE1/host1 subnets via PE-SEC
+vpp_exec pe2 "ip route add 100.64.1.0/24 table 10 via 100.64.4.10 host-$PE2_CORE out-labels 1300 1100"
+vpp_exec pe2 "ip route add 10.1.1.0/24 table 10 via 100.64.4.10 host-$PE2_CORE out-labels 1300 1100"
+# VRF 20: remote CE3 subnet via PE-SEC
+vpp_exec pe2 "ip route add 100.64.6.0/24 table 20 via 100.64.4.10 host-$PE2_CORE out-labels 1300 1200"
+vpp_exec pe2 "ip route add 10.2.1.0/24 table 20 via 100.64.4.10 host-$PE2_CORE out-labels 1300 1200"
+# Local CE4-connected LAN route (so PE2 can forward decapsulated MPLS traffic to CE4):
+vpp_exec pe2 "ip route add 10.2.2.0/24 table 20 via 100.64.7.20 host-$PE2_CE4"
+# VRF 30: remote CE5 subnet via PE-SEC
+vpp_exec pe2 "ip route add 100.64.6.0/24 table 30 via 100.64.4.10 host-$PE2_CORE out-labels 1300 1250"
+# PE-SEC/FW direct subnets (VRF 10) via PE-SEC:
 vpp_exec pe2 "ip route add 100.64.100.0/24 table 10 via 100.64.4.10 host-$PE2_CORE out-labels 1300 1100"
 vpp_exec pe2 "ip route add 10.100.1.0/24 table 10 via 100.64.4.10 host-$PE2_CORE out-labels 1300 1100"
 # Local CE-connected LAN routes (so PE2 can forward decapsulated MPLS traffic to CEs):
@@ -541,15 +599,22 @@ docker exec -i pe2 ip link set "$PE2_CE6" master VRF30 2>/dev/null || true
 docker exec -i pe2 ip route add blackhole 10.1.1.0/24 vrf VRF10 2>/dev/null || true
 docker exec -i pe2 ip route add blackhole 10.100.1.0/24 vrf VRF10 2>/dev/null || true
 docker exec -i pe2 ip route add blackhole 100.64.100.0/24 vrf VRF10 2>/dev/null || true
+docker exec -i pe2 ip route add blackhole 10.2.1.0/24 vrf VRF20 2>/dev/null || true
 
 echo ""
 echo "============================================"
 echo "  Configuring PE-SEC (Security PE via GRE)"
+echo "  Inline FW service chaining: ingress/egress VRF split"
 echo "============================================"
 
-# --- Bring up interfaces ---
+# --- Bring up ALL interfaces ---
 vpp_exec pe-sec "set interface state host-$PESEC_GRE up"
 vpp_exec pe-sec "set interface state host-$PESEC_SEC up"
+vpp_exec pe-sec "set interface state host-$PESEC_VRF10_OUT up"
+vpp_exec pe-sec "set interface state host-$PESEC_VRF20_IN up"
+vpp_exec pe-sec "set interface state host-$PESEC_VRF20_OUT up"
+vpp_exec pe-sec "set interface state host-$PESEC_VRF30_IN up"
+vpp_exec pe-sec "set interface state host-$PESEC_VRF30_OUT up"
 # (PESEC_MGMT stays Linux-only for iBGP peering via pe_mgmt bridge)
 
 # --- GRE transport interface ---
@@ -562,12 +627,43 @@ vpp_exec pe-sec "set interface ip address gre0 172.16.0.2/30"
 
 # --- MPLS setup ---
 vpp_exec pe-sec "mpls table add 0"
-vpp_exec pe-sec "ip table add 10"
 vpp_exec pe-sec "set interface mpls gre0 enable"
 
-# --- VRF 10: FW-facing interface ---
+# --- Create all VRF tables ---
+# Ingress VRFs: receive traffic from MPLS core, deliver to FW
+vpp_exec pe-sec "ip table add 10"    # VRF 10 ingress
+vpp_exec pe-sec "ip table add 20"    # VRF 20 ingress
+vpp_exec pe-sec "ip table add 30"    # VRF 30 ingress
+# Egress VRFs: receive inspected traffic from FW, forward to MPLS core
+vpp_exec pe-sec "ip table add 11"    # VRF 10 egress (post-inspection)
+vpp_exec pe-sec "ip table add 21"    # VRF 20 egress (post-inspection)
+vpp_exec pe-sec "ip table add 31"    # VRF 30 egress (post-inspection)
+
+# --- Ingress VRF interfaces (PE-SEC → FW) ---
+# VRF 10 ingress: FW receives traffic for inspection
 vpp_exec pe-sec "set interface ip table host-$PESEC_SEC 10"
 vpp_exec pe-sec "set interface ip address host-$PESEC_SEC 100.64.100.1/24"
+
+# VRF 20 ingress
+vpp_exec pe-sec "set interface ip table host-$PESEC_VRF20_IN 20"
+vpp_exec pe-sec "set interface ip address host-$PESEC_VRF20_IN 100.64.102.1/24"
+
+# VRF 30 ingress
+vpp_exec pe-sec "set interface ip table host-$PESEC_VRF30_IN 30"
+vpp_exec pe-sec "set interface ip address host-$PESEC_VRF30_IN 100.64.104.1/24"
+
+# --- Egress VRF interfaces (FW → PE-SEC, post-inspection) ---
+# VRF 10 egress: FW sends inspected traffic back
+vpp_exec pe-sec "set interface ip table host-$PESEC_VRF10_OUT 11"
+vpp_exec pe-sec "set interface ip address host-$PESEC_VRF10_OUT 100.64.101.1/24"
+
+# VRF 20 egress
+vpp_exec pe-sec "set interface ip table host-$PESEC_VRF20_OUT 21"
+vpp_exec pe-sec "set interface ip address host-$PESEC_VRF20_OUT 100.64.103.1/24"
+
+# VRF 30 egress
+vpp_exec pe-sec "set interface ip table host-$PESEC_VRF30_OUT 31"
+vpp_exec pe-sec "set interface ip address host-$PESEC_VRF30_OUT 100.64.105.1/24"
 
 # --- Loopback for BGP router-id ---
 vpp_exec pe-sec "create loopback interface"
@@ -578,52 +674,190 @@ vpp_exec pe-sec "set interface ip address loop0 10.255.0.3/32"
 # Pop transport label 310 from LSR2, expose VPN label
 vpp_exec pe-sec "mpls local-label 310 non-eos via mpls-lookup-in-table 0"
 
-# --- VPN label disposition ---
-# VPN label 1100 → VRF 10 lookup
-vpp_exec pe-sec "mpls local-label 1100 eos via ip4-lookup-in-table 10"
+# --- VPN label disposition (per-VRF) ---
+vpp_exec pe-sec "mpls local-label 1100 eos via ip4-lookup-in-table 10"   # VRF 10 ingress
+vpp_exec pe-sec "mpls local-label 1200 eos via ip4-lookup-in-table 20"   # VRF 20 ingress
+vpp_exec pe-sec "mpls local-label 1250 eos via ip4-lookup-in-table 30"   # VRF 30 ingress
 
-# --- Forward VRF routes via MPLS-over-GRE ---
-# To PE1 CE networks (VRF 10): push [1400, 600] via GRE
-vpp_exec pe-sec "ip route add 100.64.1.0/24 table 10 via 172.16.0.1 gre0 out-labels 1400 600"
-vpp_exec pe-sec "ip route add 10.1.1.0/24 table 10 via 172.16.0.1 gre0 out-labels 1400 600"
-# To PE2 CE networks (VRF 10): push [1500, 500] via GRE
-vpp_exec pe-sec "ip route add 100.64.5.0/24 table 10 via 172.16.0.1 gre0 out-labels 1500 500"
-vpp_exec pe-sec "ip route add 10.1.2.0/24 table 10 via 172.16.0.1 gre0 out-labels 1500 500"
-# Local CE route: FW's LAN (explicit interface nexthop for VRF)
+# --- Ingress VRF routes: all remote subnets → FW (for inspection) ---
+# VRF 10: remote CE subnets → FW ingress interface
+vpp_exec pe-sec "ip route add 10.1.1.0/24 table 10 via 100.64.100.20 host-$PESEC_SEC"
+vpp_exec pe-sec "ip route add 10.1.2.0/24 table 10 via 100.64.100.20 host-$PESEC_SEC"
+vpp_exec pe-sec "ip route add 100.64.1.0/24 table 10 via 100.64.100.20 host-$PESEC_SEC"
+vpp_exec pe-sec "ip route add 100.64.5.0/24 table 10 via 100.64.100.20 host-$PESEC_SEC"
 vpp_exec pe-sec "ip route add 10.100.1.0/24 table 10 via 100.64.100.20 host-$PESEC_SEC"
+
+# VRF 20: remote CE subnets → FW ingress interface
+vpp_exec pe-sec "ip route add 100.64.6.0/24 table 20 via 100.64.102.20 host-$PESEC_VRF20_IN"
+vpp_exec pe-sec "ip route add 100.64.7.0/24 table 20 via 100.64.102.20 host-$PESEC_VRF20_IN"
+vpp_exec pe-sec "ip route add 10.2.1.0/24 table 20 via 100.64.102.20 host-$PESEC_VRF20_IN"
+vpp_exec pe-sec "ip route add 10.2.2.0/24 table 20 via 100.64.102.20 host-$PESEC_VRF20_IN"
+
+# VRF 30: remote CE subnets → FW ingress interface
+vpp_exec pe-sec "ip route add 100.64.6.0/24 table 30 via 100.64.104.20 host-$PESEC_VRF30_IN"
+vpp_exec pe-sec "ip route add 100.64.7.0/24 table 30 via 100.64.104.20 host-$PESEC_VRF30_IN"
+
+# --- Egress VRF routes: actual MPLS destinations (post-inspection) ---
+# VRF 11 (egress for VRF 10): routes to PE1 and PE2 via MPLS-over-GRE
+vpp_exec pe-sec "ip route add 10.1.1.0/24 table 11 via 172.16.0.1 gre0 out-labels 1400 600"
+vpp_exec pe-sec "ip route add 100.64.1.0/24 table 11 via 172.16.0.1 gre0 out-labels 1400 600"
+vpp_exec pe-sec "ip route add 10.1.2.0/24 table 11 via 172.16.0.1 gre0 out-labels 1500 500"
+vpp_exec pe-sec "ip route add 100.64.5.0/24 table 11 via 172.16.0.1 gre0 out-labels 1500 500"
+
+# VRF 21 (egress for VRF 20): routes to PE1 and PE2
+vpp_exec pe-sec "ip route add 100.64.6.0/24 table 21 via 172.16.0.1 gre0 out-labels 1400 800"
+vpp_exec pe-sec "ip route add 10.2.1.0/24 table 21 via 172.16.0.1 gre0 out-labels 1400 800"
+vpp_exec pe-sec "ip route add 100.64.7.0/24 table 21 via 172.16.0.1 gre0 out-labels 1500 700"
+vpp_exec pe-sec "ip route add 10.2.2.0/24 table 21 via 172.16.0.1 gre0 out-labels 1500 700"
+
+# VRF 31 (egress for VRF 30): routes to PE1 and PE2
+vpp_exec pe-sec "ip route add 100.64.6.0/24 table 31 via 172.16.0.1 gre0 out-labels 1400 1000"
+vpp_exec pe-sec "ip route add 100.64.7.0/24 table 31 via 172.16.0.1 gre0 out-labels 1500 900"
 
 # --- Linux interfaces for FRR ---
 docker exec -i pe-sec ip addr add 100.64.100.1/24 dev "$PESEC_SEC" 2>/dev/null || true
+docker exec -i pe-sec ip addr add 100.64.101.1/24 dev "$PESEC_VRF10_OUT" 2>/dev/null || true
+docker exec -i pe-sec ip addr add 100.64.102.1/24 dev "$PESEC_VRF20_IN" 2>/dev/null || true
+docker exec -i pe-sec ip addr add 100.64.103.1/24 dev "$PESEC_VRF20_OUT" 2>/dev/null || true
+docker exec -i pe-sec ip addr add 100.64.104.1/24 dev "$PESEC_VRF30_IN" 2>/dev/null || true
+docker exec -i pe-sec ip addr add 100.64.105.1/24 dev "$PESEC_VRF30_OUT" 2>/dev/null || true
 # Mgmt interface already has 10.255.0.3 from Docker — no need to add
 
-# --- Linux VRF for FRR per-VRF BGP ---
+# --- Linux VRFs for FRR per-VRF BGP ---
+# Ingress VRFs
 docker exec -i pe-sec ip link add VRF10 type vrf table 10 2>/dev/null || true
 docker exec -i pe-sec ip link set VRF10 up 2>/dev/null || true
 docker exec -i pe-sec ip link set "$PESEC_SEC" master VRF10 2>/dev/null || true
+
+docker exec -i pe-sec ip link add VRF20 type vrf table 20 2>/dev/null || true
+docker exec -i pe-sec ip link set VRF20 up 2>/dev/null || true
+docker exec -i pe-sec ip link set "$PESEC_VRF20_IN" master VRF20 2>/dev/null || true
+
+docker exec -i pe-sec ip link add VRF30 type vrf table 30 2>/dev/null || true
+docker exec -i pe-sec ip link set VRF30 up 2>/dev/null || true
+docker exec -i pe-sec ip link set "$PESEC_VRF30_IN" master VRF30 2>/dev/null || true
+
+# Egress VRFs (no FRR BGP needed, static MPLS only)
+docker exec -i pe-sec ip link add VRF11 type vrf table 11 2>/dev/null || true
+docker exec -i pe-sec ip link set VRF11 up 2>/dev/null || true
+docker exec -i pe-sec ip link set "$PESEC_VRF10_OUT" master VRF11 2>/dev/null || true
+
+docker exec -i pe-sec ip link add VRF21 type vrf table 21 2>/dev/null || true
+docker exec -i pe-sec ip link set VRF21 up 2>/dev/null || true
+docker exec -i pe-sec ip link set "$PESEC_VRF20_OUT" master VRF21 2>/dev/null || true
+
+docker exec -i pe-sec ip link add VRF31 type vrf table 31 2>/dev/null || true
+docker exec -i pe-sec ip link set VRF31 up 2>/dev/null || true
+docker exec -i pe-sec ip link set "$PESEC_VRF30_OUT" master VRF31 2>/dev/null || true
 
 # Blackhole routes for remote CE LANs (prevent Linux ICMP unreachable)
 docker exec -i pe-sec ip route add blackhole 10.1.1.0/24 vrf VRF10 2>/dev/null || true
 docker exec -i pe-sec ip route add blackhole 10.1.2.0/24 vrf VRF10 2>/dev/null || true
 docker exec -i pe-sec ip route add blackhole 100.64.1.0/24 vrf VRF10 2>/dev/null || true
 docker exec -i pe-sec ip route add blackhole 100.64.5.0/24 vrf VRF10 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 10.1.1.0/24 vrf VRF11 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 10.1.2.0/24 vrf VRF11 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 100.64.6.0/24 vrf VRF20 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 100.64.7.0/24 vrf VRF20 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 10.2.1.0/24 vrf VRF20 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 10.2.2.0/24 vrf VRF20 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 100.64.6.0/24 vrf VRF21 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 100.64.7.0/24 vrf VRF21 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 10.2.1.0/24 vrf VRF21 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 10.2.2.0/24 vrf VRF21 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 100.64.6.0/24 vrf VRF30 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 100.64.7.0/24 vrf VRF30 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 100.64.6.0/24 vrf VRF31 2>/dev/null || true
+docker exec -i pe-sec ip route add blackhole 100.64.7.0/24 vrf VRF31 2>/dev/null || true
 
 echo ""
 echo "============================================"
-echo "  Configuring FW (Security Device / CE)"
+echo "  Configuring FW (Inline Security Device)"
+echo "  Per-VRF ingress/egress interfaces"
 echo "============================================"
 
-# PE-SEC facing interface
+# --- Create VRF tables ---
+vpp_exec fw "ip table add 10"
+vpp_exec fw "ip table add 20"
+vpp_exec fw "ip table add 30"
+
+# --- VRF 10 interfaces ---
+# Ingress: receives traffic from PE-SEC VRF 10 for inspection
 vpp_exec fw "set interface state host-$FW_PE up"
+vpp_exec fw "set interface ip table host-$FW_PE 10"
 vpp_exec fw "set interface ip address host-$FW_PE 100.64.100.20/24"
-vpp_exec fw "ip route add 0.0.0.0/0 via 100.64.100.1"
-# LAN-side interface (toward sec-host)
+# Egress: sends inspected traffic to PE-SEC VRF 11
+vpp_exec fw "set interface state host-$FW_VRF10_OUT up"
+vpp_exec fw "set interface ip table host-$FW_VRF10_OUT 10"
+vpp_exec fw "set interface ip address host-$FW_VRF10_OUT 100.64.101.20/24"
+# LAN-side interface (toward sec-host, stays in VRF 10)
 vpp_exec fw "set interface state host-$FW_LAN up"
+vpp_exec fw "set interface ip table host-$FW_LAN 10"
 vpp_exec fw "set interface ip address host-$FW_LAN 10.100.1.1/24"
-# Linux side for FRR eBGP peering
+
+# --- VRF 20 interfaces ---
+vpp_exec fw "set interface state host-$FW_VRF20_IN up"
+vpp_exec fw "set interface ip table host-$FW_VRF20_IN 20"
+vpp_exec fw "set interface ip address host-$FW_VRF20_IN 100.64.102.20/24"
+vpp_exec fw "set interface state host-$FW_VRF20_OUT up"
+vpp_exec fw "set interface ip table host-$FW_VRF20_OUT 20"
+vpp_exec fw "set interface ip address host-$FW_VRF20_OUT 100.64.103.20/24"
+
+# --- VRF 30 interfaces ---
+vpp_exec fw "set interface state host-$FW_VRF30_IN up"
+vpp_exec fw "set interface ip table host-$FW_VRF30_IN 30"
+vpp_exec fw "set interface ip address host-$FW_VRF30_IN 100.64.104.20/24"
+vpp_exec fw "set interface state host-$FW_VRF30_OUT up"
+vpp_exec fw "set interface ip table host-$FW_VRF30_OUT 30"
+vpp_exec fw "set interface ip address host-$FW_VRF30_OUT 100.64.105.20/24"
+
+# --- FW routing: inspected traffic → PE-SEC egress VRFs ---
+# NOTE: Must specify egress interface explicitly so VPP resolves next-hop
+#       in the correct VRF table (not the default fib:0)
+# VRF 10: default route out egress interface to PE-SEC VRF 11
+vpp_exec fw "ip route add 0.0.0.0/0 table 10 via 100.64.101.1 host-$FW_VRF10_OUT"
+# VRF 20: default route out egress interface to PE-SEC VRF 21
+vpp_exec fw "ip route add 0.0.0.0/0 table 20 via 100.64.103.1 host-$FW_VRF20_OUT"
+# VRF 30: default route out egress interface to PE-SEC VRF 31
+vpp_exec fw "ip route add 0.0.0.0/0 table 30 via 100.64.105.1 host-$FW_VRF30_OUT"
+
+# --- Linux interfaces for FRR eBGP peering ---
 docker exec -i fw ip addr add 100.64.100.20/24 dev "$FW_PE" 2>/dev/null || true
-docker exec -i fw ip route add default via 100.64.100.1 2>/dev/null || true
-# Linux side for LAN (so FRR can see connected 10.100.1.0/24)
+docker exec -i fw ip addr add 100.64.101.20/24 dev "$FW_VRF10_OUT" 2>/dev/null || true
+docker exec -i fw ip addr add 100.64.102.20/24 dev "$FW_VRF20_IN" 2>/dev/null || true
+docker exec -i fw ip addr add 100.64.103.20/24 dev "$FW_VRF20_OUT" 2>/dev/null || true
+docker exec -i fw ip addr add 100.64.104.20/24 dev "$FW_VRF30_IN" 2>/dev/null || true
+docker exec -i fw ip addr add 100.64.105.20/24 dev "$FW_VRF30_OUT" 2>/dev/null || true
 docker exec -i fw ip addr add 10.100.1.1/24 dev "$FW_LAN" 2>/dev/null || true
+
+# --- Linux VRFs for FRR per-VRF BGP ---
+docker exec -i fw ip link add VRF10 type vrf table 10 2>/dev/null || true
+docker exec -i fw ip link set VRF10 up 2>/dev/null || true
+docker exec -i fw ip link set "$FW_PE" master VRF10 2>/dev/null || true
+docker exec -i fw ip link set "$FW_VRF10_OUT" master VRF10 2>/dev/null || true
+docker exec -i fw ip link set "$FW_LAN" master VRF10 2>/dev/null || true
+
+docker exec -i fw ip link add VRF20 type vrf table 20 2>/dev/null || true
+docker exec -i fw ip link set VRF20 up 2>/dev/null || true
+docker exec -i fw ip link set "$FW_VRF20_IN" master VRF20 2>/dev/null || true
+docker exec -i fw ip link set "$FW_VRF20_OUT" master VRF20 2>/dev/null || true
+
+docker exec -i fw ip link add VRF30 type vrf table 30 2>/dev/null || true
+docker exec -i fw ip link set VRF30 up 2>/dev/null || true
+docker exec -i fw ip link set "$FW_VRF30_IN" master VRF30 2>/dev/null || true
+docker exec -i fw ip link set "$FW_VRF30_OUT" master VRF30 2>/dev/null || true
+
+# --- Disable Linux forwarding on FW ---
+# --- Disable Linux forwarding on ALL VPP nodes ---
+# VPP handles all data-plane forwarding via af-packet.
+# Linux forwarding causes duplicate packets (both VPP and kernel forward).
+# Linux ICMP redirects confuse clients when FRR-learned routes point back
+# to the ingress interface. FRR BGP only needs local TCP delivery, not forwarding.
+for node in ce1 ce2 ce3 ce4 ce5 ce6 pe1 pe2 lsr1 lsr2 pe-sec fw; do
+  docker exec -i "$node" sysctl -w net.ipv4.ip_forward=0 2>/dev/null || true
+  docker exec -i "$node" sysctl -w net.ipv4.conf.all.send_redirects=0 2>/dev/null || true
+  docker exec -i "$node" sysctl -w net.ipv4.conf.default.send_redirects=0 2>/dev/null || true
+done
 
 echo ""
 echo "============================================"
@@ -639,18 +873,18 @@ echo "============================================"
 echo "  Setting up End Hosts"
 echo "============================================"
 
-echo "  Installing tools on host1..."
-docker exec -i host1 bash -c "apt-get update -qq && apt-get install -y -qq iputils-ping traceroute iproute2 > /dev/null 2>&1" || true
 echo "  Setting default route on host1 (via CE1: 10.1.1.1)..."
 docker exec -i host1 ip route replace default via 10.1.1.1 2>/dev/null || true
 
-echo "  Installing tools on host2..."
-docker exec -i host2 bash -c "apt-get update -qq && apt-get install -y -qq iputils-ping traceroute iproute2 > /dev/null 2>&1" || true
 echo "  Setting default route on host2 (via CE2: 10.1.2.1)..."
 docker exec -i host2 ip route replace default via 10.1.2.1 2>/dev/null || true
 
-echo "  Installing tools on sec-host..."
-docker exec -i sec-host bash -c "apt-get update -qq && apt-get install -y -qq iputils-ping traceroute iproute2 > /dev/null 2>&1" || true
+echo "  Setting default route on host3 (via CE3: 10.2.1.1)..."
+docker exec -i host3 ip route replace default via 10.2.1.1 2>/dev/null || true
+
+echo "  Setting default route on host4 (via CE4: 10.2.2.1)..."
+docker exec -i host4 ip route replace default via 10.2.2.1 2>/dev/null || true
+
 echo "  Setting default route on sec-host (via FW: 10.100.1.1)..."
 docker exec -i sec-host ip route replace default via 10.100.1.1 2>/dev/null || true
 
@@ -706,8 +940,10 @@ echo "  docker exec -it ce3 vppctl ping 100.64.7.20"
 echo "  docker exec -it ce5 vppctl ping 100.64.7.20"
 echo ""
 echo "End Host tests:"
-echo "  docker exec -it host1 ping -c 3 10.1.2.10     # host1 → host2 (across MPLS core)"
-echo "  docker exec -it host2 ping -c 3 10.1.1.10     # host2 → host1 (across MPLS core)"
+echo "  docker exec -it host1 ping -c 3 10.1.2.10     # host1 → host2 (VRF 10, across MPLS core)"
+echo "  docker exec -it host2 ping -c 3 10.1.1.10     # host2 → host1 (VRF 10, across MPLS core)"
+echo "  docker exec -it host3 ping -c 3 10.2.2.10     # host3 → host4 (VRF 20, across MPLS core)"
+echo "  docker exec -it host4 ping -c 3 10.2.1.10     # host4 → host3 (VRF 20, across MPLS core)"
 echo "  docker exec -it sec-host ping -c 3 10.1.1.10  # sec-host → host1 (MPLS-over-GRE)"
 echo "  docker exec -it sec-host ping -c 3 10.1.2.10  # sec-host → host2 (MPLS-over-GRE)"
 echo "  docker exec -it host1 ping -c 3 10.100.1.10   # host1 → sec-host (MPLS-over-GRE)"

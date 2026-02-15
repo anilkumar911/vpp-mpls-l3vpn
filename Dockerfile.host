@@ -1,0 +1,17 @@
+FROM ubuntu:22.04
+
+# Networking tools for packet examination
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends \
+        iputils-ping \
+        traceroute \
+        iproute2 \
+        tcpdump \
+        netcat-openbsd \
+        curl \
+        net-tools \
+        dnsutils \
+        iperf3 \
+    && rm -rf /var/lib/apt/lists/*
+
+CMD ["sleep", "infinity"]
