@@ -57,6 +57,35 @@
   .ping-result { font-size:0.78rem; font-family:'Cascadia Code','Fira Code',monospace; }
   .ping-ok { color:var(--green); }
   .ping-label { color:var(--muted); }
+
+  /* Tab bar */
+  .tab-bar { display:flex; gap:0; border-bottom:2px solid var(--border); margin:0 16px; }
+  .tab-btn { padding:10px 24px; font-size:0.88rem; font-weight:600; color:var(--muted); background:transparent; border:none; border-bottom:3px solid transparent; cursor:pointer; transition:all 0.2s; font-family:inherit; }
+  .tab-btn:hover { color:var(--text); background:rgba(56,189,248,0.05); }
+  .tab-btn.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .tab-panel { display:none; }
+  .tab-panel.active { display:block; }
+
+  /* Service chaining article */
+  .sc-content { max-width:960px; margin:0 auto; padding:20px 24px 40px; }
+  .sc-content h2 { color:var(--accent); font-size:1.25rem; margin:28px 0 12px; padding-bottom:6px; border-bottom:1px solid var(--border); }
+  .sc-content h2:first-child { margin-top:8px; }
+  .sc-content h3 { color:var(--yellow); font-size:1rem; margin:20px 0 8px; }
+  .sc-content p { font-size:0.84rem; line-height:1.65; color:var(--text); margin:6px 0 10px; }
+  .sc-content ul, .sc-content ol { font-size:0.84rem; line-height:1.65; margin:6px 0 12px; padding-left:22px; }
+  .sc-content li { margin:4px 0; }
+  .sc-content code { background:rgba(56,189,248,0.1); color:var(--accent); padding:1px 5px; border-radius:3px; font-size:0.78rem; font-family:'Cascadia Code','Fira Code',monospace; }
+  .sc-content pre { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:12px 14px; font-size:0.75rem; line-height:1.5; overflow-x:auto; color:var(--text); font-family:'Cascadia Code','Fira Code',monospace; white-space:pre; margin:8px 0 14px; }
+  .sc-content .callout { background:rgba(56,189,248,0.06); border-left:3px solid var(--accent); padding:10px 14px; border-radius:0 6px 6px 0; margin:12px 0; }
+  .sc-content .callout-warn { background:rgba(251,191,36,0.06); border-left:3px solid var(--yellow); }
+  .sc-content .callout p { margin:2px 0; }
+  .sc-content .vrf-table { width:100%; border-collapse:collapse; margin:10px 0 16px; font-size:0.78rem; }
+  .sc-content .vrf-table th { background:var(--border); color:var(--text); padding:6px 10px; text-align:left; font-weight:600; }
+  .sc-content .vrf-table td { padding:6px 10px; border-bottom:1px solid var(--border); }
+  .sc-content .vrf-table tr:hover td { background:rgba(56,189,248,0.04); }
+  .sc-flow { display:flex; flex-wrap:wrap; gap:4px; align-items:center; margin:8px 0 14px; }
+  .sc-flow .step { padding:4px 10px; border-radius:5px; font-size:0.74rem; font-family:'Cascadia Code','Fira Code',monospace; font-weight:600; white-space:nowrap; }
+  .sc-flow .arrow { color:var(--muted); font-size:0.9rem; }
 </style>
 </head>
 <body>
@@ -70,6 +99,13 @@
   <span class="ping-result"><span class="ping-label">host1&#x2192;host2:</span> <span class="ping-ok">3/3 received, 0% loss, TTL=58, avg=237ms</span></span>
   <span class="ping-result"><span class="ping-label">host2&#x2192;host1:</span> <span class="ping-ok">3/3 received, 0% loss, TTL=58, avg=271ms</span></span>
 </div>
+
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="switchTab('topology')">Topology</button>
+  <button class="tab-btn" onclick="switchTab('service-chaining')">Service Chaining</button>
+</div>
+
+<div id="tab-topology" class="tab-panel active">
 
 <div class="legend">
   <div class="legend-item"><div class="legend-swatch" style="background:rgba(100,116,139,0.4)"></div>Ethernet</div>
@@ -186,6 +222,276 @@
 </div>
 
 <p class="note">Click any node to view routing tables, VPP traces, and packet structure at that hop.</p>
+
+</div><!-- /tab-topology -->
+
+<!-- ===== SERVICE CHAINING TAB ===== -->
+<div id="tab-service-chaining" class="tab-panel">
+<div class="sc-content">
+
+<h2>1. MPLS Service Chaining &mdash; Overview</h2>
+
+<p>In a standard MPLS L3VPN, traffic flows directly between Provider Edge (PE) routers. Each PE pushes a <strong>transport label</strong> (to reach the remote PE) and a <strong>VPN label</strong> (to identify the VRF at the remote PE), then forwards the packet through the core:</p>
+
+<div class="sc-flow">
+  <span class="step" style="background:rgba(100,116,139,0.3);color:#cbd5e1">CE1</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(162,139,250,0.25);color:#c4b5fd">PE1 (push labels)</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(162,139,250,0.15);color:#c4b5fd">LSR (swap)</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(162,139,250,0.25);color:#c4b5fd">PE2 (pop labels)</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(100,116,139,0.3);color:#cbd5e1">CE2</span>
+</div>
+
+<p><strong>Service chaining</strong> inserts a security appliance (the CNHE <em>datanode</em>) into this MPLS forwarding path. The security device receives VPN traffic, sends it through a security service (firewall/IDS), and then re-injects it into the MPLS backbone with new labels targeting the correct destination PE.</p>
+
+<p>The key principle: <em>all</em> VPN traffic for a given organization must pass through the security device &mdash; in <strong>both</strong> directions. The datanode sees traffic from CE1&rarr;CE2 <strong>and</strong> CE2&rarr;CE1, so security policy can be applied symmetrically.</p>
+
+<h2>2. How Service Chaining Works in This Lab</h2>
+
+<h3>2.1 The Service-Chained Path</h3>
+
+<p>Instead of PE1 sending traffic directly to PE2 via LSR1&rarr;LSR2, traffic is <strong>diverted to the datanode</strong> for security inspection:</p>
+
+<div class="sc-flow">
+  <span class="step" style="background:rgba(100,116,139,0.3);color:#cbd5e1">CE1</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(162,139,250,0.25);color:#c4b5fd">PE1</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(162,139,250,0.15);color:#c4b5fd">LSR1</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(162,139,250,0.15);color:#c4b5fd">LSR2</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(251,191,36,0.25);color:#fde68a">GRE</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(251,191,36,0.3);color:#fde68a">Datanode</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(74,222,128,0.25);color:#86efac">Geneve</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(74,222,128,0.3);color:#86efac">Frouter</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(74,222,128,0.25);color:#86efac">Geneve</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(251,191,36,0.3);color:#fde68a">Datanode</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(251,191,36,0.25);color:#fde68a">GRE</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(162,139,250,0.15);color:#c4b5fd">LSR2</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(162,139,250,0.25);color:#c4b5fd">PE2</span>
+  <span class="arrow">&rarr;</span>
+  <span class="step" style="background:rgba(100,116,139,0.3);color:#cbd5e1">CE2</span>
+</div>
+
+<h3>2.2 Forward Path (host1 &rarr; host2)</h3>
+
+<ol>
+  <li><strong>PE1</strong> receives the packet from CE1 and pushes MPLS labels <code>[transport][VPN 18]</code> toward PE2 (10.255.0.2) via LSR1.</li>
+  <li><strong>LSR1 &rarr; LSR2</strong> swap transport labels through the backbone.</li>
+  <li><strong>LSR2</strong> (configured as a GRE endpoint) receives the MPLS packet. Instead of forwarding directly to PE2, LSR2 encapsulates it in GRE and sends it to the datanode: <code>GRE src=203.0.113.1 dst=203.0.113.2</code>, carrying MPLS labels <code>[310 neos][1100 eos]</code>.</li>
+  <li><strong>Datanode VPP</strong> decapsulates GRE, processes MPLS:
+    <ul>
+      <li>Label <code>310</code> (non-eos): transport deaggregation &mdash; look up the next label</li>
+      <li>Label <code>1100</code> (eos): disposition &mdash; strip MPLS and do an IPv4 lookup in <code>org-pre-security-1000</code> VRF</li>
+    </ul>
+  </li>
+  <li>The <strong>pre-security VRF</strong> routes 10.1.2.0/24 via the CNHE Geneve tunnel (<code>cnhe-gnv</code>) to frouter (192.168.80.100). VPP encapsulates in Geneve with VNI 0xFFFFFF and CNHE TLV options.</li>
+  <li><strong>Frouter</strong> (reflect mode) receives on UDP/6081, inspects/reflects the packet back via Geneve with the <em>original</em> CNHE header preserved.</li>
+  <li><strong>Datanode</strong> receives the Geneve return. CNHE matches VNI 16777215, decapsulates, and delivers the inner packet to the <strong>post-security VRF</strong> (<code>org-post-security-1000</code>).</li>
+  <li>The post-security VRF routes 10.1.2.0/24 via <code>gre0</code> with MPLS out-labels <code>[1500][500]</code>. VPP pushes the labels, encapsulates in GRE, and sends to LSR2 (203.0.113.1).</li>
+  <li><strong>LSR2</strong> decapsulates GRE, forwards the MPLS packet through the backbone to PE2, which dispositions it into VRF10 and delivers to CE2 &rarr; host2.</li>
+</ol>
+
+<h3>2.3 Return Path (host2 &rarr; host1)</h3>
+
+<p>The return path is <strong>symmetric</strong> &mdash; traffic from CE2 is also diverted to the datanode:</p>
+
+<ol>
+  <li><strong>PE2</strong> pushes MPLS labels <code>[transport][VPN 18]</code> toward PE1 via LSR2&rarr;LSR1.</li>
+  <li><strong>LSR2</strong> again encapsulates in GRE to the datanode with labels <code>[310][1100]</code>.</li>
+  <li>The datanode follows the same chain: MPLS disposition &rarr; pre-security &rarr; Geneve &rarr; frouter &rarr; Geneve return &rarr; post-security.</li>
+  <li>The post-security VRF routes 10.1.1.0/24 via <code>gre0</code> with out-labels <code>[1400][600]</code> (different label stack to reach PE1 side).</li>
+  <li>Traffic flows via LSR2 &rarr; LSR1 &rarr; PE1 &rarr; CE1 &rarr; host1.</li>
+</ol>
+
+<div class="callout">
+  <p><strong>Key insight:</strong> Both directions (forward AND return) pass through the datanode. The datanode has <strong>separate MPLS label stacks</strong> for each direction in the post-security VRF: <code>[1500][500]</code> toward PE2/CE2, <code>[1400][600]</code> toward PE1/CE1. This ensures inspected traffic is re-injected into the correct direction of the MPLS backbone.</p>
+</div>
+
+<h2>3. Route Reflector with Next-Hop Self</h2>
+
+<h3>3.1 The Problem: Static Label Configuration</h3>
+
+<p>In this lab, service chaining is achieved with <strong>static MPLS labels and GRE routing</strong> on LSR2 and the datanode. LSR2 has static MPLS-over-GRE tunnels configured, and the datanode has manually-configured MPLS labels (310, 1100) and post-security out-labels (1400, 600, 1500, 500). This works for a lab but doesn't scale:</p>
+
+<ul>
+  <li>Every new VRF/customer requires new static label allocations on the datanode and LSR2</li>
+  <li>Route changes on the PEs require manual updates to the datanode's post-security label stacks</li>
+  <li>Adding new sites (CE3, CE4, ...) means more static entries</li>
+</ul>
+
+<h3>3.2 The Solution: Datanode as BGP Route Reflector</h3>
+
+<p>In a production deployment, the datanode should participate in <strong>MP-BGP</strong> as a <strong>route reflector</strong> (RR) for VPNv4 routes. Here's how it works:</p>
+
+<pre>
+               iBGP (RR client)                   iBGP (RR client)
+       PE1 &#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500; Datanode (RR) &#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500; PE2
+   AS 65000                 next-hop self                     AS 65000
+   Loopback: 10.255.0.1     Loopback: 10.255.0.3              Loopback: 10.255.0.2
+</pre>
+
+<ol>
+  <li><strong>PE1</strong> advertises VPNv4 route <code>RD:10.1.1.0/24</code> with VPN label 18 and next-hop 10.255.0.1 to the datanode (RR).</li>
+  <li><strong>PE2</strong> advertises VPNv4 route <code>RD:10.1.2.0/24</code> with VPN label 18 and next-hop 10.255.0.2 to the datanode (RR).</li>
+  <li>The <strong>datanode (RR)</strong> re-advertises each route to the other PE, but with <strong>next-hop self</strong>:
+    <ul>
+      <li>To PE1: <code>10.1.2.0/24</code> next-hop <code>10.255.0.3</code> (datanode), VPN label <code>1100</code> (disposition into pre-security)</li>
+      <li>To PE2: <code>10.1.1.0/24</code> next-hop <code>10.255.0.3</code> (datanode), VPN label <code>1100</code></li>
+    </ul>
+  </li>
+  <li>Now PE1 thinks PE2's routes are reachable via the datanode. It pushes <code>[transport-to-datanode][1100]</code> &mdash; traffic naturally arrives at the datanode for inspection.</li>
+  <li>After inspection, the datanode knows the <em>original</em> PE's next-hop and VPN label from the received BGP update. It pushes <code>[transport-to-PE2][18]</code> and forwards out the GRE/MPLS tunnel.</li>
+</ol>
+
+<div class="callout">
+  <p><strong>Why next-hop self?</strong> By changing the BGP next-hop to itself, the datanode forces PEs to send all VPN traffic through it. Without next-hop self, PEs would resolve the original PE's next-hop via IGP and send directly, bypassing the security device entirely.</p>
+</div>
+
+<h3>3.3 What This Eliminates</h3>
+
+<table class="vrf-table">
+  <tr><th>Static (Lab)</th><th>Dynamic (Production with RR)</th></tr>
+  <tr><td>Static MPLS labels 310, 1100 on datanode</td><td>VPN labels dynamically allocated by BGP, transport labels by LDP/SR</td></tr>
+  <tr><td>Static GRE+MPLS config on LSR2</td><td>LSR2 just forwards labeled packets &mdash; transport label resolves to datanode via IGP</td></tr>
+  <tr><td>Manual post-security out-labels [1400][600], [1500][500]</td><td>Datanode learns destination PE labels from BGP and pushes them dynamically</td></tr>
+  <tr><td>Per-prefix static routes in post-security VRF</td><td>BGP best-path selection installs routes automatically</td></tr>
+  <tr><td>Adding a new site = manual config changes</td><td>Adding a new site = PE advertises via BGP, datanode reflects automatically</td></tr>
+</table>
+
+<h3>3.4 Route Reflector Behavior</h3>
+
+<p>Standard BGP route reflectors reflect routes between clients without modifying next-hop. The datanode deviates from this by setting <strong>next-hop self</strong> on reflected routes. This is the critical mechanism:</p>
+
+<pre>
+# Standard RR (not service-chained):
+PE1 advertises: 10.1.1.0/24 NH=10.255.0.1 label=18
+RR reflects to PE2: 10.1.1.0/24 NH=10.255.0.1 label=18   (NH unchanged)
+==> PE2 sends directly to PE1 (no security inspection)
+
+# Datanode RR (service-chained):
+PE1 advertises: 10.1.1.0/24 NH=10.255.0.1 label=18
+RR reflects to PE2: 10.1.1.0/24 NH=10.255.0.3 label=1100 (NH = datanode, label = pre-sec)
+==> PE2 sends to datanode --> inspection --> datanode forwards to PE1
+</pre>
+
+<p>The datanode stores the original route attributes (original NH, original label) so it can construct the correct label stack after inspection to forward traffic to the destination PE.</p>
+
+<h2>4. Split VRF Architecture in Datanode</h2>
+
+<h3>4.1 What is a Split VRF?</h3>
+
+<p>The datanode maintains <strong>two separate VRFs per organization</strong> (per-tenant). This is the "split VRF" model &mdash; a single organization's routing table is split into a <strong>pre-security</strong> half and a <strong>post-security</strong> half:</p>
+
+<table class="vrf-table">
+  <tr><th>VRF</th><th>Name</th><th>FIB</th><th>Table ID</th><th>Purpose</th></tr>
+  <tr><td style="color:var(--orange)">Pre-Security</td><td><code>org-pre-security-1000</code></td><td>fib 6</td><td>16778216</td><td>Receives traffic <strong>before</strong> security inspection</td></tr>
+  <tr><td style="color:var(--green)">Post-Security</td><td><code>org-post-security-1000</code></td><td>fib 5</td><td>50332648</td><td>Receives traffic <strong>after</strong> security inspection</td></tr>
+</table>
+
+<h3>4.2 Why Two VRFs?</h3>
+
+<p>The split ensures a <strong>strict security boundary</strong>:</p>
+
+<ul>
+  <li><strong>Pre-security VRF</strong> routes ALL matching prefixes toward the security service (frouter via Geneve). There is <em>no direct route</em> to the WAN/GRE &mdash; traffic <em>must</em> be inspected.</li>
+  <li><strong>Post-security VRF</strong> routes inspected traffic back to the MPLS backbone (via GRE with appropriate label stacks). This VRF is only reachable <em>after</em> the security service returns the packet.</li>
+  <li>If both were in a single VRF, a routing misconfiguration could create a forwarding shortcut that bypasses the security service entirely.</li>
+</ul>
+
+<h3>4.3 Traffic Flow Through Split VRFs</h3>
+
+<pre>
+  MPLS ingress          ┌──────────────────────────┐
+  [310][1100]  ────────►│  org-pre-security-1000   │
+  (GRE decap)           │  (fib 6, table 16778216) │
+                        │                          │
+                        │  10.1.x.0/24             │
+                        │    → via cnhe-gnv        │
+                        │    → frouter (Geneve)    │
+                        └────────────┬─────────────┘
+                                     │
+                                     ▼  Geneve encap (VNI 0xFFFFFF)
+                              ┌──────────────┐
+                              │   Frouter    │
+                              │  (inspect /  │
+                              │   reflect)   │
+                              └──────┬───────┘
+                                     │
+                                     ▼  Geneve return (VNI 0xFFFFFF)
+                        ┌──────────────────────────┐
+                        │  org-post-security-1000  │
+                        │  (fib 5, table 50332648) │
+                        │                          │
+                        │  10.1.1.0/24             │
+                        │    → gre0 [1400][600]    │
+                        │  10.1.2.0/24             │
+                        │    → gre0 [1500][500]    │
+                        └────────────┬─────────────┘
+                                     │
+                                     ▼  MPLS push + GRE encap
+                               LSR2 → backbone
+</pre>
+
+<h3>4.4 VNI Bindings and VRF Mapping</h3>
+
+<p>The CNHE plugin uses VNI (Virtual Network Identifier) bindings to map Geneve tunnels to the correct VRF pair:</p>
+
+<table class="vrf-table">
+  <tr><th>VNI</th><th>Hex</th><th>Source</th><th>Purpose</th></tr>
+  <tr><td>1000</td><td>0x3E8</td><td>Configured by datanode-agent</td><td>Standard org VNI for agent-originated traffic</td></tr>
+  <tr><td>16777215</td><td>0xFFFFFF</td><td>Wire sentinel (cb-&gt;vni not set)</td><td>MPLS-injected traffic: when packets enter via GRE/MPLS (not via Geneve), the CNHE buffer VNI field is unset. The midchain fixup writes 0xFFFFFF as the Geneve VNI.</td></tr>
+</table>
+
+<p>Both VNIs map to the <strong>same VRF pair</strong>: pre-security table <code>16778216</code> and post-security table <code>50332648</code>. When frouter reflects a Geneve packet with VNI=0xFFFFFF, CNHE matches the VNI binding and delivers the inner packet to <code>org-post-security-1000</code>.</p>
+
+<div class="callout">
+  <p><strong>The split VRF + Geneve VNI binding is what makes the security chain mandatory.</strong> MPLS disposition delivers to pre-security (which only has routes to frouter). Geneve return delivers to post-security (which only has routes to the backbone). There's no routing shortcut between them.</p>
+</div>
+
+<h3>4.5 Additional VRFs on the Datanode</h3>
+
+<p>Besides the split org VRFs, the datanode has infrastructure VRFs:</p>
+
+<table class="vrf-table">
+  <tr><th>VRF</th><th>FIB</th><th>Table</th><th>Role</th></tr>
+  <tr><td>default</td><td>fib 0</td><td>0</td><td>Management, GRE outer IP (203.0.113.2). MPLS label 310 non-eos deags here.</td></tr>
+  <tr><td>LAN</td><td>fib 3</td><td>1</td><td>LAN bridge (192.168.80.0/20). Carries Geneve underlay to frouter.</td></tr>
+  <tr><td>WAN</td><td>fib 4</td><td>2</td><td>WAN bridge (192.168.48.0/20). Not used in this service chain.</td></tr>
+</table>
+
+<p>The <strong>LAN VRF</strong> is critical: it carries the Geneve underlay traffic between the datanode's <code>lan</code> interface and the frouter. The CNHE midchain adjacency stacks: <code>cnhe-gnv</code> (Geneve header) &rarr; <code>ip4 via 192.168.80.100 lan</code> (underlay in LAN VRF). This ensures Geneve encapsulation uses the LAN bridge for underlay connectivity, completely separate from the org VRFs.</p>
+
+<h2>5. Summary: Static Lab vs. Production Architecture</h2>
+
+<table class="vrf-table">
+  <tr><th>Aspect</th><th>This Lab (Static)</th><th>Production (Dynamic)</th></tr>
+  <tr><td>Traffic steering</td><td>LSR2 static GRE tunnel + MPLS labels</td><td>BGP next-hop self on datanode RR attracts traffic</td></tr>
+  <tr><td>Label allocation</td><td>Manual (310, 1100, 1400, 600, 1500, 500)</td><td>Dynamic via MP-BGP + LDP/Segment Routing</td></tr>
+  <tr><td>Security routing</td><td>Static routes in pre/post VRFs</td><td>BGP-installed routes with CNHE policy</td></tr>
+  <tr><td>Geneve tunnel</td><td>CNHE plugin + frouter-sim (reflect)</td><td>CNHE plugin + actual firewall (Palo Alto, etc.)</td></tr>
+  <tr><td>Split VRF</td><td>Same model &mdash; pre-sec / post-sec per org</td><td>Same model &mdash; pre-sec / post-sec per org</td></tr>
+  <tr><td>Scale</td><td>1 org, 2 CEs, manual config</td><td>Many orgs, many CEs, fully automated</td></tr>
+</table>
+
+<div class="callout callout-warn">
+  <p><strong>Note:</strong> The core data-plane architecture is identical between the lab and production. The split VRF model, CNHE Geneve tunnel, and pre-sec/post-sec flow are the same. The only difference is <em>how routes and labels are populated</em> (static CLI vs. dynamic BGP + datanode-agent).</p>
+</div>
+
+</div><!-- /sc-content -->
+</div><!-- /tab-service-chaining -->
 
 <!-- Overlay -->
 <div class="overlay" id="overlay" onclick="closeDetail()"></div>
@@ -647,6 +953,22 @@ function closeDetail() {
 
 // Close on Escape key
 document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeDetail(); });
+
+// ===== TAB SWITCHING =====
+function switchTab(tabId) {
+  var panels = document.querySelectorAll('.tab-panel');
+  var buttons = document.querySelectorAll('.tab-btn');
+  for (var i = 0; i < panels.length; i++) panels[i].classList.remove('active');
+  for (var i = 0; i < buttons.length; i++) buttons[i].classList.remove('active');
+  document.getElementById('tab-' + tabId).classList.add('active');
+  // highlight matching button
+  for (var i = 0; i < buttons.length; i++) {
+    if (buttons[i].textContent.toLowerCase().replace(/\s+/g,'-') === tabId ||
+        (tabId === 'topology' && buttons[i].textContent === 'Topology') ||
+        (tabId === 'service-chaining' && buttons[i].textContent === 'Service Chaining'))
+      buttons[i].classList.add('active');
+  }
+}
 </script>
 
 </body>
