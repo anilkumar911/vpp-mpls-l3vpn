@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MPLS L3VPN + Datanode + Frouter (Geneve)</title>
+<style>
+  :root {
+    --bg: #0f172a; --card: #1e293b; --border: #334155;
+    --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8;
+    --green: #4ade80; --orange: #fb923c; --red: #f87171;
+    --purple: #a78bfa; --cyan: #22d3ee; --yellow: #fbbf24; --pink: #f472b6;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Segoe UI',system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; overflow-x:hidden; }
+  .header { text-align:center; padding:20px 16px 6px; border-bottom:1px solid var(--border); }
+  .header h1 { font-size:1.5rem; color:var(--accent); font-weight:600; }
+  .header p { color:var(--muted); font-size:0.82rem; margin-top:4px; }
+  .legend { display:flex; gap:14px; justify-content:center; padding:6px 16px; flex-wrap:wrap; }
+  .legend-item { display:flex; align-items:center; gap:5px; font-size:0.72rem; color:var(--muted); }
+  .legend-swatch { width:13px; height:13px; border-radius:3px; }
+  .topology-container { padding:6px 16px 20px; overflow-x:auto; }
+  svg { display:block; margin:0 auto; }
+  .node { cursor:pointer; }
+  .node rect { stroke-width:2; rx:8; transition:all 0.3s; }
+  .node:hover rect { filter:brightness(1.3); stroke-width:3; }
+  .node text { font-family:'Segoe UI',system-ui,sans-serif; fill:var(--text); font-size:12px; text-anchor:middle; dominant-baseline:central; pointer-events:none; }
+  .node .label { font-weight:600; font-size:13px; }
+  .node .sublabel { font-size:10px; fill:var(--muted); }
+  .link line { stroke:var(--border); stroke-width:2; transition:all 0.3s; }
+  .iface-label { font-size:8px; fill:var(--muted); font-family:'Cascadia Code','Fira Code',monospace; pointer-events:none; opacity:0.85; }
+  .iface-label.vrf10 { fill:var(--accent); opacity:0.7; }
+  .iface-label.geneve { fill:var(--green); opacity:0.7; }
+  .note { color:var(--muted); font-size:0.82rem; text-align:center; margin-top:6px; }
+
+  /* Detail panel */
+  .detail-panel { display:none; position:fixed; top:0; right:0; width:560px; height:100vh; background:var(--card); border-left:2px solid var(--border); overflow-y:auto; z-index:100; padding:16px; box-shadow:-4px 0 12px rgba(0,0,0,0.5); }
+  .detail-panel.open { display:block; }
+  .detail-close { position:sticky; top:0; float:right; background:var(--border); color:var(--text); border:none; border-radius:6px; padding:4px 12px; cursor:pointer; font-size:14px; z-index:101; }
+  .detail-close:hover { background:var(--red); }
+  .detail-panel h2 { color:var(--accent); font-size:1.15rem; margin-bottom:10px; }
+  .detail-panel h3 { color:var(--yellow); font-size:0.9rem; margin:12px 0 4px; }
+  .detail-section { margin-bottom:14px; }
+  .detail-section pre { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px 10px; font-size:0.72rem; line-height:1.45; overflow-x:auto; color:var(--text); font-family:'Cascadia Code','Fira Code',monospace; white-space:pre-wrap; word-break:break-all; }
+
+  /* Packet structure */
+  .pkt-row { display:flex; gap:3px; flex-wrap:wrap; margin:6px 0; align-items:center; }
+  .pkt-box { padding:3px 7px; border-radius:4px; font-size:0.68rem; font-family:'Cascadia Code','Fira Code',monospace; font-weight:600; white-space:nowrap; }
+  .pkt-dir { font-size:0.72rem; color:var(--muted); margin:8px 0 2px; font-weight:600; }
+
+  /* Overlay */
+  .overlay { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.4); z-index:99; }
+  .overlay.open { display:block; }
+
+  /* Ping result */
+  .ping-bar { display:flex; justify-content:center; gap:24px; padding:8px 16px; flex-wrap:wrap; }
+  .ping-result { font-size:0.78rem; font-family:'Cascadia Code','Fira Code',monospace; }
+  .ping-ok { color:var(--green); }
+  .ping-label { color:var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>MPLS L3VPN &#x2014; CNHE Datanode + Frouter (Geneve)</h1>
+  <p>End-to-end verified: host1 (10.1.1.10) &#x2194; host2 (10.1.2.10) via MPLS L3VPN with CNHE Geneve security service chain. Click any node for details.</p>
+</div>
+
+<div class="ping-bar">
+  <span class="ping-result"><span class="ping-label">host1&#x2192;host2:</span> <span class="ping-ok">3/3 received, 0% loss, TTL=58, avg=237ms</span></span>
+  <span class="ping-result"><span class="ping-label">host2&#x2192;host1:</span> <span class="ping-ok">3/3 received, 0% loss, TTL=58, avg=271ms</span></span>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-swatch" style="background:rgba(100,116,139,0.4)"></div>Ethernet</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:rgba(251,191,36,0.4)"></div>GRE</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:rgba(162,139,250,0.4)"></div>MPLS</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:rgba(74,222,128,0.4)"></div>Geneve/UDP</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:rgba(56,189,248,0.4)"></div>IPv4</div>
+  <div class="legend-item"><div class="legend-swatch" style="background:rgba(244,114,182,0.4)"></div>ICMP</div>
+</div>
+
+<div class="topology-container">
+<svg id="topology" width="1100" height="420" viewBox="-5 0 1110 420">
+  <g class="links">
+    <g class="link"><line x1="100" y1="200" x2="140" y2="200"/></g>
+    <g class="link"><line x1="230" y1="200" x2="270" y2="200"/></g>
+    <g class="link"><line x1="370" y1="200" x2="400" y2="200"/></g>
+    <g class="link"><line x1="490" y1="200" x2="530" y2="200"/></g>
+    <g class="link"><line x1="620" y1="200" x2="660" y2="200"/></g>
+    <g class="link"><line x1="760" y1="200" x2="800" y2="200"/></g>
+    <g class="link"><line x1="890" y1="200" x2="940" y2="200"/></g>
+    <g class="link"><line x1="575" y1="225" x2="575" y2="320" stroke-dasharray="6,4"/></g>
+    <g class="link"><line x1="520" y1="338" x2="430" y2="338"/></g>
+    <g class="link"><line x1="430" y1="352" x2="520" y2="352"/></g>
+  </g>
+
+  <g id="iface-labels">
+    <text x="105" y="192" class="iface-label vrf10">eth0</text>
+    <text x="123" y="192" class="iface-label vrf10">eth1</text>
+    <text x="233" y="192" class="iface-label vrf10">eth0</text>
+    <text x="255" y="192" class="iface-label vrf10">eth1</text>
+    <text x="372" y="192" class="iface-label vrf10">eth4</text>
+    <text x="393" y="192" class="iface-label vrf10">eth1</text>
+    <text x="492" y="192" class="iface-label vrf10">eth0</text>
+    <text x="518" y="192" class="iface-label vrf10">eth1</text>
+    <text x="622" y="192" class="iface-label vrf10">eth2</text>
+    <text x="648" y="192" class="iface-label vrf10">eth2</text>
+    <text x="762" y="192" class="iface-label vrf10">eth3</text>
+    <text x="790" y="192" class="iface-label vrf10">eth0</text>
+    <text x="893" y="192" class="iface-label vrf10">eth1</text>
+    <text x="930" y="192" class="iface-label vrf10">eth0</text>
+    <text x="580" y="258" class="iface-label" style="fill:var(--yellow);opacity:0.7">gre0</text>
+    <text x="580" y="318" class="iface-label" style="fill:var(--yellow);opacity:0.7">host-eth9</text>
+    <text x="500" y="333" class="iface-label geneve">cnhe-gnv</text>
+    <text x="438" y="333" class="iface-label geneve">:6081</text>
+    <text x="500" y="360" class="iface-label geneve">cnhe-gnv</text>
+    <text x="438" y="360" class="iface-label geneve">:6081</text>
+  </g>
+
+  <!-- host1 -->
+  <g class="node" onclick="showDetail('host1')">
+    <rect x="10" y="175" width="90" height="50" fill="var(--card)" stroke="var(--accent)"/>
+    <text x="55" y="195" class="label">host1</text>
+    <text x="55" y="213" class="sublabel">10.1.1.10</text>
+  </g>
+  <!-- CE1 -->
+  <g class="node" onclick="showDetail('ce1')">
+    <rect x="140" y="175" width="90" height="50" fill="var(--card)" stroke="#64748b"/>
+    <text x="185" y="195" class="label">CE1</text>
+    <text x="185" y="213" class="sublabel">VRF 10</text>
+  </g>
+  <!-- PE1 -->
+  <g class="node" onclick="showDetail('pe1')">
+    <rect x="270" y="175" width="100" height="50" fill="var(--card)" stroke="var(--purple)"/>
+    <text x="320" y="195" class="label">PE1</text>
+    <text x="320" y="213" class="sublabel">AS 65000</text>
+  </g>
+  <!-- LSR1 -->
+  <g class="node" onclick="showDetail('lsr1')">
+    <rect x="400" y="175" width="90" height="50" fill="var(--card)" stroke="var(--purple)"/>
+    <text x="445" y="195" class="label">LSR1</text>
+    <text x="445" y="213" class="sublabel">P router</text>
+  </g>
+  <!-- LSR2 -->
+  <g class="node" onclick="showDetail('lsr2')">
+    <rect x="530" y="175" width="90" height="50" fill="var(--card)" stroke="var(--purple)"/>
+    <text x="575" y="195" class="label">LSR2</text>
+    <text x="575" y="213" class="sublabel">GRE endpoint</text>
+  </g>
+  <!-- PE2 -->
+  <g class="node" onclick="showDetail('pe2')">
+    <rect x="660" y="175" width="100" height="50" fill="var(--card)" stroke="var(--purple)"/>
+    <text x="710" y="195" class="label">PE2</text>
+    <text x="710" y="213" class="sublabel">AS 65000</text>
+  </g>
+  <!-- CE2 -->
+  <g class="node" onclick="showDetail('ce2')">
+    <rect x="800" y="175" width="90" height="50" fill="var(--card)" stroke="#64748b"/>
+    <text x="845" y="195" class="label">CE2</text>
+    <text x="845" y="213" class="sublabel">VRF 10</text>
+  </g>
+  <!-- host2 -->
+  <g class="node" onclick="showDetail('host2')">
+    <rect x="940" y="175" width="90" height="50" fill="var(--card)" stroke="var(--accent)"/>
+    <text x="985" y="195" class="label">host2</text>
+    <text x="985" y="213" class="sublabel">10.1.2.10</text>
+  </g>
+  <!-- Datanode -->
+  <g class="node" onclick="showDetail('datanode')">
+    <rect x="510" y="315" width="130" height="60" fill="var(--card)" stroke="var(--yellow)"/>
+    <text x="575" y="338" class="label">CNHE Datanode</text>
+    <text x="575" y="356" class="sublabel">org-pre/org-post</text>
+    <text x="575" y="370" class="sublabel" style="font-size:9px">VPP + GRE + Geneve</text>
+  </g>
+  <!-- Frouter -->
+  <g class="node" onclick="showDetail('frouter')">
+    <rect x="330" y="323" width="130" height="50" fill="var(--card)" stroke="var(--green)"/>
+    <text x="395" y="342" class="label" style="fill:var(--green)">Frouter Sim</text>
+    <text x="395" y="360" class="sublabel">192.168.80.100</text>
+  </g>
+
+  <text x="593" y="290" font-size="9" fill="var(--yellow)" font-family="sans-serif">GRE tunnel</text>
+  <text x="455" y="308" font-size="9" fill="var(--green)" font-family="sans-serif">Geneve (UDP/6081)</text>
+</svg>
+</div>
+
+<p class="note">Click any node to view routing tables, VPP traces, and packet structure at that hop.</p>
+
+<!-- Overlay -->
+<div class="overlay" id="overlay" onclick="closeDetail()"></div>
+
+<!-- Detail Panel -->
+<div class="detail-panel" id="detailPanel">
+  <button class="detail-close" onclick="closeDetail()">&#x2715;</button>
+  <div id="detailContent"></div>
+</div>
+
+<script>
+// ===== NODE DATA =====
+var NODES = {
+
+host1: {
+  title: 'host1 \u2014 Source',
+  info: '<b>IP:</b> 10.1.1.10/24 (eth0)<br><b>Gateway:</b> 10.1.1.1 (CE1)<br><b>Role:</b> Traffic source \u2014 sends ICMP echo to host2 (10.1.2.10)',
+  routes: '# ip route\ndefault via 10.1.1.1 dev eth0\n10.1.1.0/24 dev eth0 proto kernel scope link src 10.1.1.10',
+  packets: {
+    forward: [
+      { label: 'host1 \u2192 CE1 (eth0)', layers: [
+        { tag:'eth', text:'Eth dst=CE1' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10 TTL=64' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]}
+    ],
+    reverse: [
+      { label: 'CE1 \u2192 host1 (eth0)', layers: [
+        { tag:'eth', text:'Eth dst=host1' },
+        { tag:'ipv4', text:'IPv4 10.1.2.10 \u2192 10.1.1.10 TTL=58' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]}
+    ]
+  },
+  trace: '# docker exec host1 ping -c 3 -W 2 10.1.2.10\nPING 10.1.2.10 (10.1.2.10) 56(84) bytes of data.\n64 bytes from 10.1.2.10: icmp_seq=1 ttl=58 time=253 ms\n64 bytes from 10.1.2.10: icmp_seq=2 ttl=58 time=219 ms\n64 bytes from 10.1.2.10: icmp_seq=3 ttl=58 time=240 ms\n\n--- 10.1.2.10 ping statistics ---\n3 packets transmitted, 3 received, 0% packet loss, time 2000ms\nrtt min/avg/max/mdev = 218.696/237.080/252.677/14.012 ms'
+},
+
+ce1: {
+  title: 'CE1 \u2014 Customer Edge Router',
+  info: '<b>IPs:</b> 100.64.1.20 (eth0, PE-facing), 10.1.1.1 (eth1, host-facing)<br><b>Protocol:</b> eBGP to PE1 (AS 65001 \u2192 AS 65000)<br><b>Advertises:</b> 10.1.1.0/24 to PE1<br><b>Receives:</b> default via 100.64.1.10 (PE1)',
+  routes: '# show ip route\nK>* 0.0.0.0/0 via 100.64.1.10, eth0\nC>* 10.1.1.0/24 is directly connected, eth1\nC>* 100.64.1.0/24 is directly connected, eth0\nB>* 100.64.5.0/24 [20/0] via 100.64.1.10, eth0',
+  packets: {
+    forward: [
+      { label: 'host1 \u2192 CE1 (eth1 ingress)', layers: [
+        { tag:'eth', text:'Eth' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10 TTL=64' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]},
+      { label: 'CE1 \u2192 PE1 (eth0 egress)', layers: [
+        { tag:'eth', text:'Eth dst=PE1' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10 TTL=63' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]}
+    ],
+    reverse: [
+      { label: 'PE1 \u2192 CE1 (eth0 ingress)', layers: [
+        { tag:'eth', text:'Eth' },
+        { tag:'ipv4', text:'IPv4 10.1.2.10 \u2192 10.1.1.10 TTL=59' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]},
+      { label: 'CE1 \u2192 host1 (eth1 egress)', layers: [
+        { tag:'eth', text:'Eth dst=host1' },
+        { tag:'ipv4', text:'IPv4 10.1.2.10 \u2192 10.1.1.10 TTL=58' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]}
+    ]
+  }
+},
+
+pe1: {
+  title: 'PE1 \u2014 Provider Edge (VRF 10)',
+  info: '<b>Loopback:</b> 10.255.0.1<br><b>VRF 10 IF:</b> eth0 (100.64.1.10)<br><b>MPLS label 18:</b> VPN label for VRF10<br><b>BGP peers:</b> CE1 (eBGP, AS 65001), PE2 (iBGP via LSR1)<br><b>Pushes:</b> [transport label][VPN label 18] toward PE2 via LSR1',
+  routes: '# show ip route vrf VRF10\nB>* 10.1.1.0/24 [20/0] via 100.64.1.20, eth0   \u2190 learned from CE1\nB   10.1.2.0/24 [200/0] via 10.255.0.2, label 18  \u2190 iBGP from PE2\nC>* 100.64.1.0/24 is directly connected, eth0\nB>r 100.64.5.0/24 [200/0] via 10.255.0.2, label 18\n\n# show bgp ipv4 vpn (VRF10 selected)\n*>  10.1.1.0/24  100.64.1.20  0  0 65001 i   label=18\n*>i 10.1.2.0/24  10.255.0.2   0  100  0 65001 i  label=18\n\n# show mpls table\n18  BGP  VRF10  (disposition)',
+  packets: {
+    forward: [
+      { label: 'CE1 \u2192 PE1 (eth0 ingress, VRF10)', layers: [
+        { tag:'eth', text:'Eth' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10 TTL=63' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]},
+      { label: 'PE1 \u2192 LSR1 (eth4 egress, MPLS push)', layers: [
+        { tag:'eth', text:'Eth dst=LSR1' },
+        { tag:'mpls', text:'MPLS [transport] neos' },
+        { tag:'mpls', text:'MPLS [18:VPN] eos' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10 TTL=63' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]}
+    ],
+    reverse: [
+      { label: 'LSR1 \u2192 PE1 (eth4 ingress, MPLS)', layers: [
+        { tag:'eth', text:'Eth' },
+        { tag:'mpls', text:'MPLS [18:VPN] eos' },
+        { tag:'ipv4', text:'IPv4 10.1.2.10 \u2192 10.1.1.10 TTL=60' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]},
+      { label: 'PE1 \u2192 CE1 (eth0 egress, VRF10 lookup)', layers: [
+        { tag:'eth', text:'Eth dst=CE1' },
+        { tag:'ipv4', text:'IPv4 10.1.2.10 \u2192 10.1.1.10 TTL=59' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]}
+    ]
+  }
+},
+
+lsr1: {
+  title: 'LSR1 \u2014 Label Switch Router (P)',
+  info: '<b>IPs:</b> 100.64.2.20 (eth1, PE1-facing), 100.64.3.10 (eth0, LSR2-facing)<br><b>Role:</b> MPLS transit \u2014 swaps transport label between PE1 and LSR2<br><b>Static routes:</b> 10.255.0.1 via PE1, 10.255.0.2 via LSR2',
+  routes: '# show ip route\nK>* 10.255.0.1/32 via 100.64.2.10, eth1  (PE1)\nK>* 10.255.0.2/32 via 100.64.3.20, eth0  (LSR2)\nC>* 100.64.2.0/24 is directly connected, eth1\nC>* 100.64.3.0/24 is directly connected, eth0',
+  packets: {
+    forward: [
+      { label: 'PE1 \u2192 LSR1 (eth1 ingress)', layers: [
+        { tag:'eth', text:'Eth' },
+        { tag:'mpls', text:'MPLS [transport] neos' },
+        { tag:'mpls', text:'MPLS [18:VPN] eos' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]},
+      { label: 'LSR1 \u2192 LSR2 (eth0 egress, label swap)', layers: [
+        { tag:'eth', text:'Eth dst=LSR2' },
+        { tag:'mpls', text:"MPLS [transport'] neos" },
+        { tag:'mpls', text:'MPLS [18:VPN] eos' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]}
+    ],
+    reverse: [
+      { label: 'LSR2 \u2192 LSR1 (eth0 ingress)', layers: [
+        { tag:'eth', text:'Eth' },
+        { tag:'mpls', text:'MPLS [transport] neos' },
+        { tag:'mpls', text:'MPLS [18:VPN] eos' },
+        { tag:'ipv4', text:'IPv4 10.1.2.10 \u2192 10.1.1.10' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]},
+      { label: 'LSR1 \u2192 PE1 (eth1 egress, swap/pop)', layers: [
+        { tag:'eth', text:'Eth dst=PE1' },
+        { tag:'mpls', text:'MPLS [18:VPN] eos' },
+        { tag:'ipv4', text:'IPv4 10.1.2.10 \u2192 10.1.1.10' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]}
+    ]
+  }
+},
+
+lsr2: {
+  title: 'LSR2 \u2014 GRE Endpoint to Datanode',
+  info: '<b>IPs:</b> 100.64.4.10 (eth0, PE2-facing), 100.64.3.20 (eth2, LSR1-facing)<br><b>eth1:</b> L2 link to datanode host-eth9 (203.0.113.0/24, GRE transport)<br><b>Role:</b> Terminates MPLS from backbone, encapsulates in GRE (203.0.113.1 \u2192 203.0.113.2) to datanode<br><b>GRE carries:</b> MPLS labels [310 neos][1100 eos] toward datanode',
+  routes: '# ip route show\n10.255.0.1 via 100.64.3.10 dev eth2    (PE1 loopback)\n10.255.0.2 via 100.64.4.20 dev eth0    (PE2 loopback)\n100.64.3.0/24 dev eth2 proto kernel src 100.64.3.20\n100.64.4.0/24 dev eth0 proto kernel src 100.64.4.10\n\n# eth1 \u2192 shared L2 segment with datanode (203.0.113.0/24)\n# GRE tunnel: 203.0.113.1 (LSR2) \u2194 203.0.113.2 (datanode)',
+  packets: {
+    forward: [
+      { label: 'LSR1 \u2192 LSR2 (eth2 ingress, MPLS)', layers: [
+        { tag:'eth', text:'Eth' },
+        { tag:'mpls', text:'MPLS [transport] neos' },
+        { tag:'mpls', text:'MPLS [18:VPN] eos' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]},
+      { label: 'LSR2 \u2192 Datanode (eth1, GRE encap)', layers: [
+        { tag:'eth', text:'Eth dst=datanode' },
+        { tag:'ipv4', text:'GRE outer: 203.0.113.1 \u2192 203.0.113.2' },
+        { tag:'gre', text:'GRE proto=MPLS' },
+        { tag:'mpls', text:'MPLS [310] neos TTL=62' },
+        { tag:'mpls', text:'MPLS [1100] eos' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]}
+    ],
+    reverse: [
+      { label: 'Datanode \u2192 LSR2 (eth1, GRE encap)', layers: [
+        { tag:'eth', text:'Eth dst=LSR2' },
+        { tag:'ipv4', text:'GRE outer: 203.0.113.2 \u2192 203.0.113.1' },
+        { tag:'gre', text:'GRE proto=MPLS' },
+        { tag:'mpls', text:'MPLS [1500] neos' },
+        { tag:'mpls', text:'MPLS [500] eos' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]},
+      { label: 'LSR2 \u2192 PE2 (eth0, MPLS to backbone)', layers: [
+        { tag:'eth', text:'Eth dst=PE2' },
+        { tag:'mpls', text:'MPLS [transport] neos' },
+        { tag:'mpls', text:'MPLS [18:VPN] eos' },
+        { tag:'ipv4', text:'IPv4 10.1.2.10 \u2192 10.1.1.10' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]}
+    ]
+  }
+},
+
+datanode: {
+  title: 'CNHE Datanode \u2014 Security Service Chain',
+  info: '<b>GRE:</b> gre0 (203.0.113.2 \u2194 203.0.113.1), host-eth9<br><b>LAN:</b> 192.168.80.11/20 (lan interface), cnhe-gnv (NBMA Geneve)<br><b>WAN:</b> 192.168.48.11/20 (wan interface)<br><b>VRFs:</b><br>&nbsp;&nbsp;fib 0: default<br>&nbsp;&nbsp;fib 3: LAN (table 1) \u2014 192.168.80.0/20<br>&nbsp;&nbsp;fib 4: WAN (table 2) \u2014 192.168.48.0/20<br>&nbsp;&nbsp;fib 5: org-post-security-1000 (table 50332648)<br>&nbsp;&nbsp;fib 6: org-pre-security-1000 (table 16778216)<br><b>CNHE Peer:</b> ff000000-0000-0000-c000-0000c0a85064 \u2192 192.168.80.100 (frouter)<br><b>VNI 1000:</b> configured by agent (org VNI)<br><b>VNI 16777215:</b> wire VNI for MPLS-injected traffic (cb->vni not set \u2192 sentinel 0xFFFFFF)',
+  routes: '# MPLS labels\n310:neos \u2192 deag fib:0 (look up next label)\n1100:eos \u2192 mpls-disposition pipe \u2192 ip4-lookup in org-pre-security-1000 (fib 6)\n\n# Pre-security VRF (fib 6, table 16778216)\n10.1.1.0/24 \u2192 cnhe-checks-dpo \u2192 via ff00::c000:0:c0a8:5064 cnhe-gnv\n10.1.2.0/24 \u2192 cnhe-checks-dpo \u2192 via ff00::c000:0:c0a8:5064 cnhe-gnv\n\n# Post-security VRF (fib 5, table 50332648)\n10.1.1.0/24 \u2192 cnhe-checks-dpo \u2192 via gre0 labels [1400 pipe][600 pipe]\n10.1.2.0/24 \u2192 cnhe-checks-dpo \u2192 via gre0 labels [1500 pipe][500 pipe]\n\n# GRE tunnel\n[0] src 203.0.113.2 dst 203.0.113.1 payload L3 point-to-point\n\n# CNHE VNI bindings\n   vni   underlay overlay org-fib underlay-fib interface  mode  state\n  1000     ipv4    ipv4       5            3  cnhe-gnv geneve    up\n16777215   ipv4    ipv4       5            3  cnhe-gnv geneve    up\n\n# CNHE peers\nff000000-...-c0a85064  192.168.80.100  vni=copy tunnelid=copy  mode=geneve\n# Adjacency @5: ipv4 via ff00::c000:0:c0a8:5064 cnhe-gnv\n#   midchain \u2192 Geneve header with CNHE TLV options\n#   stacked-on: ipv4 via 192.168.80.100 lan',
+  packets: {
+    forward: [
+      { label: '\u2460 GRE ingress (host-eth9)', layers: [
+        { tag:'eth', text:'Eth src=LSR2 dst=datanode' },
+        { tag:'ipv4', text:'GRE outer: 203.0.113.1 \u2192 203.0.113.2 TTL=253' },
+        { tag:'gre', text:'GRE proto=MPLS' },
+        { tag:'mpls', text:'MPLS [310] neos TTL=62' },
+        { tag:'mpls', text:'MPLS [1100] eos' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]},
+      { label: '\u2461 MPLS disposition \u2192 pre-security VRF', layers: [
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10 TTL=62' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]},
+      { label: '\u2462 cnhe-checks \u2192 Geneve encap (cnhe-gnv \u2192 lan)', layers: [
+        { tag:'eth', text:'Eth src=datanode dst=frouter' },
+        { tag:'ipv4', text:'UDP outer: 192.168.80.11 \u2192 192.168.80.100 TTL=63' },
+        { tag:'udp', text:'UDP 14535 \u2192 6081' },
+        { tag:'geneve', text:'Geneve VNI=0xFFFFFF + CNHE TLV opts' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]},
+      { label: '\u2463 Frouter reflects \u2192 Geneve return (lan ingress)', layers: [
+        { tag:'eth', text:'Eth src=frouter dst=datanode' },
+        { tag:'ipv4', text:'UDP: 192.168.80.100 \u2192 192.168.80.11 TTL=64' },
+        { tag:'udp', text:'UDP 6081 \u2192 6081' },
+        { tag:'geneve', text:'Geneve VNI=0xFFFFFF + CNHE TLV opts' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10 TTL=61' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]},
+      { label: '\u2464 cnhe-geneve4-input \u2192 post-security \u2192 MPLS GRE egress', layers: [
+        { tag:'eth', text:'Eth src=datanode dst=LSR2' },
+        { tag:'ipv4', text:'GRE outer: 203.0.113.2 \u2192 203.0.113.1 TTL=253' },
+        { tag:'gre', text:'GRE proto=MPLS' },
+        { tag:'mpls', text:'MPLS [500] eos TTL=64' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10 TTL=60' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]}
+    ],
+    reverse: [
+      { label: '\u2460 GRE ingress (return path)', layers: [
+        { tag:'eth', text:'Eth src=LSR2 dst=datanode' },
+        { tag:'ipv4', text:'GRE outer: 203.0.113.1 \u2192 203.0.113.2' },
+        { tag:'gre', text:'GRE proto=MPLS' },
+        { tag:'mpls', text:'MPLS [310] neos' },
+        { tag:'mpls', text:'MPLS [1100] eos' },
+        { tag:'ipv4', text:'IPv4 10.1.2.10 \u2192 10.1.1.10' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]},
+      { label: '\u2461 MPLS disposition \u2192 pre-sec \u2192 Geneve \u2192 frouter \u2192 post-sec', layers: [
+        { tag:'geneve', text:'Geneve round-trip (same as forward)' }
+      ]},
+      { label: '\u2462 Post-security \u2192 MPLS [1400][600] \u2192 GRE egress', layers: [
+        { tag:'eth', text:'Eth src=datanode dst=LSR2' },
+        { tag:'ipv4', text:'GRE outer: 203.0.113.2 \u2192 203.0.113.1' },
+        { tag:'gre', text:'GRE proto=MPLS' },
+        { tag:'mpls', text:'MPLS [600] eos' },
+        { tag:'ipv4', text:'IPv4 10.1.2.10 \u2192 10.1.1.10' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]}
+    ]
+  },
+  trace: '# VPP Trace \u2014 Forward path (host1 \u2192 host2)\n\naf-packet-input (host-eth9)\n  IP4: LSR2-MAC \u2192 datanode-MAC\nethernet-input\nip4-input\n  GRE: 203.0.113.1 \u2192 203.0.113.2   ttl 253, length 116\n  GRE mpls_unicast\nip4-lookup (fib 0)\nip4-receive\ngre4-input\n  GRE: tunnel 22 len 116 src 203.0.113.1 dst 203.0.113.2\nmpls-input\n  MPLS: label 310 ttl 62 exp 0\nmpls-lookup (fib 0, label 310 neos \u2192 LB 110)\nlookup-mpls-dst\n  1100:eos \u2192 load-balance:111\nip4-mpls-label-disposition-pipe\n  rpf-id:-1 ip4, pipe\nlookup-ip4-dst\n  fib-index:6 (org-pre-security-1000) addr:10.1.2.10 \u2192 LB:97\ncnhe-checks-ip4\n  rx sw-if-index 22, no fib change 65600, no MTU check\nip4-midchain\n  tx cnhe-gnv \u2192 adj @5: ipv4 via ff00::c000:0:c0a8:5064 cnhe-gnv\n  midchain rewrite: Geneve header + CNHE TLV (tunnelid, peernumber, nat-src)\n  stacked-on: ipv4 via 192.168.80.100 lan\ntunnel-output\nip4-rewrite\n  via 192.168.80.100 lan\nlan-output\n  UDP: 192.168.80.11 \u2192 192.168.80.100\n  UDP: 14535 \u2192 6081, length 140\nlan-tx\n\n# Geneve return from frouter\n\naf-packet-input (lan)\nethernet-input\nip4-input\n  UDP: 192.168.80.100 \u2192 192.168.80.11  ttl 64, length 160\n  UDP: 6081 \u2192 6081, length 140\nip4-lookup (fib 3/LAN)\nip4-receive\nip4-udp-lookup\n  UDP: src-port 6081 dst-port 6081\ncnhe-geneve4-input\n  cnhe-gnv fib/dpo 5\n  GENEVE: ver 0 len 10 proto 0x0800\n  vni 16777215  tunnelid -1  peernumber -1\n  ICMP: 10.1.1.10 \u2192 10.1.2.10  ttl 61\nip4-input\ntcp-mss-clamping-ip4-in\nip4-lookup (fib 5 / org-post-security-1000)\ncnhe-checks-ip4\n  rx sw-if-index 11, allowed MTU 1400\nip4-mpls-label-imposition-pipe\n  mpls-header:[500:64:0:eos]\nmpls-midchain\n  adj-idx 24: mpls via gre0\n  stacked-on: ipv4 via 203.0.113.1 host-eth9\ntunnel-output\nip4-rewrite\n  via 203.0.113.1 host-eth9\nhost-eth9-output\n  GRE: 203.0.113.2 \u2192 203.0.113.1  ttl 253\n  GRE mpls_unicast\nhost-eth9-tx'
+},
+
+frouter: {
+  title: 'Frouter Simulator \u2014 Security Service (Reflect Mode)',
+  info: '<b>IP:</b> 192.168.80.100 (cnhe_lan bridge)<br><b>Mode:</b> REFLECT \u2014 receives Geneve packets, passthrough reflects back<br><b>Geneve port:</b> UDP/6081<br><b>Key fix:</b> Preserves original CNHE Geneve header (TLV options: tunnelid, peernumber, nat-src, vpnid, sgt) and uses well-known port 6081 for return instead of ephemeral source port',
+  routes: '# Frouter Simulator Configuration\nREFLECT_MODE=true\nGENEVE_PORT=6081\nLISTEN_ADDR=0.0.0.0:6081\n\n# Geneve header handling:\n# - Parses incoming Geneve header with CNHE TLV options\n# - In reflect mode, reuses the ORIGINAL parsed header\n#   (preserving VNI, tunnelid, peernumber, nat-src, etc.)\n# - Builds return packet: geneve.Build(originalHeader, innerPacket)\n# - Always uses genevePort (6081) as dst port, not ephemeral src port',
+  packets: {
+    forward: [
+      { label: 'Datanode \u2192 Frouter (Geneve ingress)', layers: [
+        { tag:'eth', text:'Eth src=datanode dst=frouter' },
+        { tag:'ipv4', text:'UDP: 192.168.80.11 \u2192 192.168.80.100' },
+        { tag:'udp', text:'UDP 14535 \u2192 6081' },
+        { tag:'geneve', text:'Geneve VNI=0xFFFFFF ver=0 len=10' },
+        { tag:'geneve', text:'CNHE TLVs: tunnelid peernumber nat-src vpnid sgt' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]},
+      { label: 'Frouter \u2192 Datanode (Geneve reflect)', layers: [
+        { tag:'eth', text:'Eth src=frouter dst=datanode' },
+        { tag:'ipv4', text:'UDP: 192.168.80.100 \u2192 192.168.80.11' },
+        { tag:'udp', text:'UDP 6081 \u2192 6081' },
+        { tag:'geneve', text:'Geneve VNI=0xFFFFFF (original header preserved)' },
+        { tag:'geneve', text:'CNHE TLVs: tunnelid peernumber nat-src vpnid sgt' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]}
+    ],
+    reverse: [
+      { label: 'Same flow \u2014 frouter is symmetric reflect', layers: [
+        { tag:'geneve', text:'Geneve reflect mode: inner packet unchanged' }
+      ]}
+    ]
+  },
+  trace: '# Frouter Simulator Geneve Processing\n#\n# 1. Raw socket receives UDP/6081 on 192.168.80.100\n# 2. Parse outer: Ethernet \u2192 IPv4 \u2192 UDP \u2192 Geneve header\n# 3. Geneve header parsed with CNHE options preserved:\n#    - VNI: 16777215 (0xFFFFFF)\n#    - TLV options: tunnelid, peernumber, nat-src, vpnid, sgt\n# 4. Inner packet extracted (IPv4/ICMP)\n# 5. REFLECT MODE:\n#    - Swap src/dst MACs\n#    - Reuse ORIGINAL Geneve header (geneve.Build(geneveHeader, innerPacket))\n#    - Send to datanode: 192.168.80.100:6081 \u2192 192.168.80.11:6081\n#\n# Bugs fixed:\n#   a) Used f.genevePort (6081) instead of remoteVTEP.Port (ephemeral)\n#   b) Reuse parsed header instead of geneve.NewHeader() (bare, no CNHE opts)'
+},
+
+pe2: {
+  title: 'PE2 \u2014 Provider Edge (VRF 10)',
+  info: '<b>Loopback:</b> 10.255.0.2<br><b>VRF 10 IF:</b> eth2 (100.64.5.10)<br><b>MPLS label 18:</b> VPN label for VRF10<br><b>BGP peers:</b> CE2 (eBGP, AS 65001), PE1 (iBGP via LSR2/LSR1)<br><b>Receives:</b> MPLS [transport][VPN 18] from backbone, dispositions into VRF10',
+  routes: '# show ip route vrf VRF10\nB   10.1.1.0/24 [200/0] via 10.255.0.1, label 18  \u2190 iBGP from PE1\nB>* 10.1.2.0/24 [20/0] via 100.64.5.20, eth2  \u2190 learned from CE2\nB>r 100.64.1.0/24 [200/0] via 10.255.0.1, label 18\nC>* 100.64.5.0/24 is directly connected, eth2\n\n# show bgp ipv4 vpn (VRF10 selected)\n*>i 10.1.1.0/24  10.255.0.1  0  100  0 65001 i  label=18\n*>  10.1.2.0/24  100.64.5.20  0  0 65001 i  label=18\n\n# show mpls table\n18  BGP  VRF10  (disposition)',
+  packets: {
+    forward: [
+      { label: 'LSR2 \u2192 PE2 (MPLS ingress)', layers: [
+        { tag:'eth', text:'Eth' },
+        { tag:'mpls', text:'MPLS [18:VPN] eos' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]},
+      { label: 'PE2 \u2192 CE2 (eth2 egress, VRF10 lookup)', layers: [
+        { tag:'eth', text:'Eth dst=CE2' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10 TTL=59' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]}
+    ],
+    reverse: [
+      { label: 'CE2 \u2192 PE2 (eth2 ingress, VRF10)', layers: [
+        { tag:'eth', text:'Eth' },
+        { tag:'ipv4', text:'IPv4 10.1.2.10 \u2192 10.1.1.10 TTL=63' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]},
+      { label: 'PE2 \u2192 LSR2 (MPLS push)', layers: [
+        { tag:'eth', text:'Eth dst=LSR2' },
+        { tag:'mpls', text:'MPLS [transport] neos' },
+        { tag:'mpls', text:'MPLS [18:VPN] eos' },
+        { tag:'ipv4', text:'IPv4 10.1.2.10 \u2192 10.1.1.10 TTL=63' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]}
+    ]
+  }
+},
+
+ce2: {
+  title: 'CE2 \u2014 Customer Edge Router',
+  info: '<b>IPs:</b> 100.64.5.20 (eth1, PE2-facing), 10.1.2.1 (eth0, host-facing)<br><b>Protocol:</b> eBGP to PE2 (AS 65001 \u2192 AS 65000)<br><b>Advertises:</b> 10.1.2.0/24 to PE2<br><b>Receives:</b> default via 100.64.5.10 (PE2)',
+  routes: '# show ip route\nK>* 0.0.0.0/0 via 100.64.5.10, eth1\nC>* 10.1.2.0/24 is directly connected, eth0\nC>* 100.64.5.0/24 is directly connected, eth1\nB>* 100.64.1.0/24 [20/0] via 100.64.5.10, eth1',
+  packets: {
+    forward: [
+      { label: 'PE2 \u2192 CE2 (eth1 ingress)', layers: [
+        { tag:'eth', text:'Eth' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10 TTL=59' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]},
+      { label: 'CE2 \u2192 host2 (eth0 egress)', layers: [
+        { tag:'eth', text:'Eth dst=host2' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10 TTL=58' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]}
+    ],
+    reverse: [
+      { label: 'host2 \u2192 CE2 (eth0 ingress)', layers: [
+        { tag:'eth', text:'Eth' },
+        { tag:'ipv4', text:'IPv4 10.1.2.10 \u2192 10.1.1.10 TTL=64' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]},
+      { label: 'CE2 \u2192 PE2 (eth1 egress)', layers: [
+        { tag:'eth', text:'Eth dst=PE2' },
+        { tag:'ipv4', text:'IPv4 10.1.2.10 \u2192 10.1.1.10 TTL=63' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]}
+    ]
+  }
+},
+
+host2: {
+  title: 'host2 \u2014 Destination',
+  info: '<b>IP:</b> 10.1.2.10/24 (eth0)<br><b>Gateway:</b> 10.1.2.1 (CE2)<br><b>Role:</b> Traffic destination \u2014 receives ICMP echo from host1, replies',
+  routes: '# ip route\ndefault via 10.1.2.1 dev eth0\n10.1.2.0/24 dev eth0 proto kernel scope link src 10.1.2.10',
+  packets: {
+    forward: [
+      { label: 'CE2 \u2192 host2 (eth0 ingress)', layers: [
+        { tag:'eth', text:'Eth dst=host2' },
+        { tag:'ipv4', text:'IPv4 10.1.1.10 \u2192 10.1.2.10 TTL=58' },
+        { tag:'icmp', text:'ICMP Echo Request' }
+      ]}
+    ],
+    reverse: [
+      { label: 'host2 \u2192 CE2 (eth0 egress)', layers: [
+        { tag:'eth', text:'Eth dst=CE2' },
+        { tag:'ipv4', text:'IPv4 10.1.2.10 \u2192 10.1.1.10 TTL=64' },
+        { tag:'icmp', text:'ICMP Echo Reply' }
+      ]}
+    ]
+  },
+  trace: '# docker exec host2 ping -c 3 -W 2 10.1.1.10\nPING 10.1.1.10 (10.1.1.10) 56(84) bytes of data.\n64 bytes from 10.1.1.10: icmp_seq=1 ttl=58 time=258 ms\n64 bytes from 10.1.1.10: icmp_seq=2 ttl=58 time=238 ms\n64 bytes from 10.1.1.10: icmp_seq=3 ttl=58 time=316 ms\n\n--- 10.1.1.10 ping statistics ---\n3 packets transmitted, 3 received, 0% packet loss, time 2002ms\nrtt min/avg/max/mdev = 237.765/270.750/316.343/33.294 ms'
+}
+
+};
+
+// ===== RENDER FUNCTIONS =====
+
+function pktClass(tag) {
+  var map = {
+    eth:'background:rgba(100,116,139,0.3);color:#cbd5e1;border:1px solid rgba(100,116,139,0.5)',
+    mpls:'background:rgba(162,139,250,0.25);color:#c4b5fd;border:1px solid rgba(162,139,250,0.5)',
+    gre:'background:rgba(251,191,36,0.25);color:#fde68a;border:1px solid rgba(251,191,36,0.5)',
+    geneve:'background:rgba(74,222,128,0.25);color:#86efac;border:1px solid rgba(74,222,128,0.5)',
+    ipv4:'background:rgba(56,189,248,0.2);color:#7dd3fc;border:1px solid rgba(56,189,248,0.5)',
+    icmp:'background:rgba(244,114,182,0.2);color:#f9a8d4;border:1px solid rgba(244,114,182,0.5)',
+    udp:'background:rgba(34,211,238,0.2);color:#67e8f9;border:1px solid rgba(34,211,238,0.5)'
+  };
+  return map[tag] || '';
+}
+
+function renderPackets(packets) {
+  var html = '';
+  if (packets.forward && packets.forward.length) {
+    html += '<div class="pkt-dir">\u25b6 Forward (host1 \u2192 host2)</div>';
+    for (var i = 0; i < packets.forward.length; i++) {
+      var hop = packets.forward[i];
+      html += '<div style="font-size:0.7rem;color:var(--muted);margin:4px 0 1px;">' + hop.label + '</div>';
+      html += '<div class="pkt-row">';
+      for (var j = 0; j < hop.layers.length; j++) {
+        var l = hop.layers[j];
+        html += '<span class="pkt-box" style="' + pktClass(l.tag) + '">' + l.text + '</span>';
+      }
+      html += '</div>';
+    }
+  }
+  if (packets.reverse && packets.reverse.length) {
+    html += '<div class="pkt-dir" style="margin-top:10px;">\u25c0 Return (host2 \u2192 host1)</div>';
+    for (var i = 0; i < packets.reverse.length; i++) {
+      var hop = packets.reverse[i];
+      html += '<div style="font-size:0.7rem;color:var(--muted);margin:4px 0 1px;">' + hop.label + '</div>';
+      html += '<div class="pkt-row">';
+      for (var j = 0; j < hop.layers.length; j++) {
+        var l = hop.layers[j];
+        html += '<span class="pkt-box" style="' + pktClass(l.tag) + '">' + l.text + '</span>';
+      }
+      html += '</div>';
+    }
+  }
+  return html;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function showDetail(nodeId) {
+  var node = NODES[nodeId];
+  if (!node) return;
+  var html = '<h2>' + node.title + '</h2>';
+  if (node.info) {
+    html += '<div class="detail-section"><p style="font-size:0.78rem;line-height:1.5;">' + node.info + '</p></div>';
+  }
+  if (node.routes) {
+    html += '<div class="detail-section"><h3>Routing / Config</h3><pre>' + escapeHtml(node.routes) + '</pre></div>';
+  }
+  if (node.packets) {
+    html += '<div class="detail-section"><h3>Packet Structure at This Hop</h3>' + renderPackets(node.packets) + '</div>';
+  }
+  if (node.trace) {
+    html += '<div class="detail-section"><h3>Trace / Evidence</h3><pre>' + escapeHtml(node.trace) + '</pre></div>';
+  }
+  document.getElementById('detailContent').innerHTML = html;
+  document.getElementById('detailPanel').classList.add('open');
+  document.getElementById('overlay').classList.add('open');
+}
+
+function closeDetail() {
+  document.getElementById('detailPanel').classList.remove('open');
+  document.getElementById('overlay').classList.remove('open');
+}
+
+// Close on Escape key
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeDetail(); });
+</script>
+
+</body>
+</html>
