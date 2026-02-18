@@ -103,6 +103,7 @@
 <div class="tab-bar">
   <button class="tab-btn active" onclick="switchTab('topology')">Topology</button>
   <button class="tab-btn" onclick="switchTab('service-chaining')">Service Chaining</button>
+  <button class="tab-btn" onclick="switchTab('setup-guide')">Setup Guide</button>
 </div>
 
 <div id="tab-topology" class="tab-panel active">
@@ -492,6 +493,287 @@ RR reflects to PE2: 10.1.1.0/24 NH=10.255.0.3 label=1100 (NH = datanode, label =
 
 </div><!-- /sc-content -->
 </div><!-- /tab-service-chaining -->
+
+<div id="tab-setup-guide" class="tab-panel">
+<div class="sc-content">
+
+<h2>Datanode Setup Summary</h2>
+<p>This section documents every configuration change applied to the <code>cnhe-datanode</code> container to integrate it as a Security PE in the MPLS L3VPN topology. The setup is split across multiple scripts, executed in sequence.</p>
+
+<div class="callout">
+<p><strong>Script execution order:</strong></p>
+<ol>
+<li><code>setup-cnhe.sh</code> &mdash; Base infrastructure: af-packet interfaces, MAC sync, interface detection</li>
+<li><em>IPsec tunnel must be established (creates org VRFs automatically)</em></li>
+<li><code>setup-cnhe-datanode-frouter.sh</code> &mdash; Direct LAN approach (GRE branch), <strong>OR</strong></li>
+<li><code>setup-cnhe-datanode-geneve.sh</code> &mdash; CNHE Geneve approach (cnhe-integration branch)</li>
+</ol>
+</div>
+
+<h2>Step 1: Base Infrastructure (<code>setup-cnhe.sh</code>)</h2>
+
+<h3>af-packet Interface Creation</h3>
+<p>The datanode container has <strong>10 network interfaces</strong> (eth0&ndash;eth9) connected to different Docker bridge networks. The script creates VPP af-packet host interfaces for each:</p>
+<pre>
+# Dynamically create af-packet interfaces for all ethX on cnhe-datanode
+for iface in eth0 eth1 eth2 eth3 eth4 eth5 eth6 eth7 eth8 eth9; do
+  vpp_exec cnhe-datanode "create host-interface name $iface"
+  vpp_exec cnhe-datanode "set interface state host-$iface up"
+done
+</pre>
+
+<h3>MAC Address Synchronisation</h3>
+<p>VPP auto-generates <code>02:fe:*</code> MACs for af-packet interfaces, but remote nodes (e.g., LSR2) ARP against the Linux veth MAC. Without syncing, VPP drops packets as <em>"l3 mac mismatch"</em>. The script reads each Linux MAC and applies it to VPP:</p>
+<pre>
+# Sync VPP af-packet MACs with Linux MACs (eth0 through eth9)
+for iface in eth0 eth1 eth2 eth3 eth4 eth5 eth6 eth7 eth8 eth9; do
+  LINUX_MAC=$(docker exec cnhe-datanode cat /sys/class/net/$iface/address)
+  vpp_exec cnhe-datanode "set interface mac address host-$iface $LINUX_MAC"
+done
+</pre>
+
+<h3>Interface-to-Network Detection</h3>
+<p>Docker assigns ethX interfaces in unpredictable order. The script detects which interface is on which subnet by checking Linux IP addresses:</p>
+<pre>
+# Detect datanode interface roles
+DN_GRE=$(get_iface cnhe-datanode "203.0.113.")     # GRE transport (to LSR2)
+DN_VRF10_IN=$(get_iface cnhe-datanode "100.64.100.") # VRF 10 ingress (to FW)
+DN_VRF10_OUT=$(get_iface cnhe-datanode "100.64.101.") # VRF 10 egress (from FW)
+DN_VRF20_IN=$(get_iface cnhe-datanode "100.64.102.") # VRF 20 ingress
+DN_VRF20_OUT=$(get_iface cnhe-datanode "100.64.103.") # VRF 20 egress
+DN_VRF30_IN=$(get_iface cnhe-datanode "100.64.104.") # VRF 30 ingress
+DN_VRF30_OUT=$(get_iface cnhe-datanode "100.64.105.") # VRF 30 egress
+</pre>
+
+<h2>Step 2: GRE Tunnel &amp; MPLS (Both Approaches)</h2>
+
+<p>Both the frouter (direct LAN) and Geneve approaches share the same GRE tunnel and MPLS label setup on the datanode.</p>
+
+<h3>GRE Tunnel to LSR2</h3>
+<pre>
+# GRE transport interface (toward LSR2 on 203.0.113.0/24)
+set interface state host-eth9 up
+set interface ip address host-eth9 203.0.113.2/24
+
+# Sync MAC to prevent l3 mac mismatch drops
+set interface mac address host-eth9 $DN_GRE_LINUX_MAC
+
+# Create GRE tunnel (MPLS-over-GRE)
+create gre tunnel src 203.0.113.2 dst 203.0.113.1
+set interface state gre0 up
+set interface ip address gre0 172.16.0.2/30
+</pre>
+
+<h3>MPLS Label Processing</h3>
+<pre>
+# Enable MPLS on GRE interface
+mpls table add 0
+set interface mpls gre0 enable
+
+# Transport label: 310 non-eos &rarr; continue MPLS lookup for inner VPN label
+mpls local-label 310 non-eos via mpls-lookup-in-table 0
+
+# VPN label disposition: 1100 eos &rarr; IP lookup in org-pre-security VRF
+mpls local-label 1100 eos via ip4-lookup-in-table $PRE_TABLE_ID
+</pre>
+
+<div class="callout">
+<p><strong>Label semantics:</strong> Transport label <code>310</code> is the outer label, popped first by the <code>non-eos</code> rule to expose the inner VPN label <code>1100</code>. The <code>eos</code> rule on label <code>1100</code> sends the decapsulated IP packet to the org-pre-security VRF for inspection routing.</p>
+</div>
+
+<h2>Step 3a: Direct LAN Approach (<code>setup-cnhe-datanode-frouter.sh</code>)</h2>
+<p>In this approach, pre-security traffic is forwarded to the frouter-simulator via the shared LAN bridge (192.168.80.0/24). The datanode, frouter, cortex, and broker are all on this network.</p>
+
+<h3>Pre-security Routes &rarr; Frouter VIP</h3>
+<pre>
+# All VPN prefixes in pre-security VRF route to frouter VIP on LAN
+FROUTER_VIP="192.168.80.100"
+ip route add 10.1.1.0/24 table $PRE_TABLE_ID via $FROUTER_VIP lan
+ip route add 10.1.2.0/24 table $PRE_TABLE_ID via $FROUTER_VIP lan
+ip route add 100.64.1.0/24 table $PRE_TABLE_ID via $FROUTER_VIP lan
+ip route add 100.64.5.0/24 table $PRE_TABLE_ID via $FROUTER_VIP lan
+ip route add 10.100.1.0/24 table $PRE_TABLE_ID via $FROUTER_VIP lan
+</pre>
+
+<h3>Post-security Routes &rarr; MPLS/GRE</h3>
+<pre>
+# Inspected traffic exits via MPLS labels over GRE tunnel
+# Toward PE1 (host1): transport 1400, VPN 600
+ip route add 10.1.1.0/24  table $POST_TABLE_ID via 172.16.0.1 gre0 out-labels 1400 600
+ip route add 100.64.1.0/24 table $POST_TABLE_ID via 172.16.0.1 gre0 out-labels 1400 600
+
+# Toward PE2 (host2): transport 1500, VPN 500
+ip route add 10.1.2.0/24  table $POST_TABLE_ID via 172.16.0.1 gre0 out-labels 1500 500
+ip route add 100.64.5.0/24 table $POST_TABLE_ID via 172.16.0.1 gre0 out-labels 1500 500
+</pre>
+
+<h3>Frouter-Simulator Fixes (3 bugs)</h3>
+
+<table class="vrf-table">
+<tr><th>Bug</th><th>Symptom</th><th>Fix</th></tr>
+<tr>
+  <td>Wrong default gateway</td>
+  <td>Frouter&rsquo;s default route targets Docker bridge gateway (192.168.80.1) instead of datanode LAN VIP. Return traffic uses wrong MAC &rarr; VPP <em>l3 mac mismatch</em> drop.</td>
+  <td><code>ip route replace default via $DN_LAN_IP dev eth1</code> on frouter-simulator</td>
+</tr>
+<tr>
+  <td>ICMP redirects</td>
+  <td>Traffic enters and exits frouter on the same interface (eth1). Linux sends ICMP redirects, confusing VPP.</td>
+  <td><code>sysctl net.ipv4.conf.all.send_redirects=0</code> on frouter-simulator</td>
+</tr>
+<tr>
+  <td>Missing LAN VRF route leaks</td>
+  <td>Return traffic from frouter arrives in LAN VRF (table 1), which has no routes for VPN prefixes (10.1.x.0/24). Traffic falls through to WAN default and is lost.</td>
+  <td>Add route leaks: <code>ip route add $prefix table 1 via ip4-lookup-in-table $POST_TABLE_ID</code></td>
+</tr>
+</table>
+
+<pre>
+# Fix 1: Frouter default gateway → datanode LAN IP
+docker exec frouter-simulator ip route replace default via $DN_LAN_IP dev eth1
+
+# Fix 2: Disable ICMP redirects on frouter
+docker exec frouter-simulator sysctl -w net.ipv4.conf.all.send_redirects=0
+docker exec frouter-simulator sysctl -w net.ipv4.conf.eth1.send_redirects=0
+
+# Fix 3: LAN VRF → org-post-security route leaks
+for prefix in 10.1.1.0/24 10.1.2.0/24 100.64.1.0/24 100.64.5.0/24 10.100.1.0/24; do
+  ip route add $prefix table 1 via ip4-lookup-in-table $POST_TABLE_ID
+done
+</pre>
+
+<h2>Step 3b: Geneve Approach (<code>setup-cnhe-datanode-geneve.sh</code>)</h2>
+<p>In this approach, pre-security traffic is forwarded to the frouter-simulator via the <strong>CNHE Geneve tunnel</strong> (<code>cnhe-gnv</code> interface). This eliminates the three frouter bugs above because Geneve handles routing, MAC resolution, and VRF delivery natively.</p>
+
+<h3>CNHE Geneve Peer Discovery</h3>
+<pre>
+# The cnhe-gnv interface is NBMA: routes use the peer UUID as an IPv6 next-hop
+# Frouter IP 192.168.80.100 → UUID ff000000-...-c0a85064 → IPv6 ff00::c000:0:c0a8:5064
+CNHE_PEER_IPV6=$(show cnhe peers cnhe-gnv | grep ff00::)
+</pre>
+
+<h3>Pre-security Routes &rarr; Geneve Tunnel</h3>
+<pre>
+# VPN prefixes in pre-security VRF route via CNHE Geneve to frouter
+ip route add 10.1.1.0/24  table $PRE_TABLE_ID via $CNHE_PEER_IPV6 cnhe-gnv
+ip route add 10.1.2.0/24  table $PRE_TABLE_ID via $CNHE_PEER_IPV6 cnhe-gnv
+ip route add 100.64.1.0/24 table $PRE_TABLE_ID via $CNHE_PEER_IPV6 cnhe-gnv
+ip route add 100.64.5.0/24 table $PRE_TABLE_ID via $CNHE_PEER_IPV6 cnhe-gnv
+ip route add 10.100.1.0/24 table $PRE_TABLE_ID via $CNHE_PEER_IPV6 cnhe-gnv
+</pre>
+
+<h3>VNI Binding for Geneve Return Path</h3>
+<p>When MPLS packets enter the datanode (not via Geneve), the CNHE buffer VNI is unset. The midchain fixup uses the sentinel value <code>0xFFFFFF</code> (VNI 16777215) in the outgoing Geneve header. A VNI binding is needed so CNHE can match the tunnel on return and deliver the packet to the correct post-security VRF:</p>
+<pre>
+cnhe org add ip4 cnhe-gnv vni 16777215 \
+  presec-table-ip4 $PRE_TABLE_ID \
+  postsec-table-ip4 $POST_TABLE_ID
+</pre>
+
+<h3>Post-security Routes (same as direct LAN)</h3>
+<pre>
+# Same MPLS label stacks — the egress path is identical
+ip route add 10.1.1.0/24  table $POST_TABLE_ID via 172.16.0.1 gre0 out-labels 1400 600
+ip route add 10.1.2.0/24  table $POST_TABLE_ID via 172.16.0.1 gre0 out-labels 1500 500
+</pre>
+
+<div class="callout">
+<p><strong>Why Geneve is simpler:</strong> No frouter default gateway fix, no ICMP redirect suppression, no LAN VRF route leaks. Geneve decap uses the VNI binding to deliver packets directly to the org-post-security VRF, bypassing LAN VRF entirely.</p>
+</div>
+
+<h2>Org VRF Tables (Created by IPsec Tunnel)</h2>
+<p>The org VRFs are <strong>not</strong> created by the setup scripts. They are created dynamically by the datanode when the IPsec tunnel is established. The table IDs are computed from the org ID and VNI:</p>
+
+<table class="vrf-table">
+<tr><th>VRF Name</th><th>Table ID</th><th>Purpose</th></tr>
+<tr><td><code>org-pre-security-1000</code></td><td>16778216</td><td>Receives MPLS-decapsulated traffic for inspection. Routes point to frouter (via LAN or Geneve).</td></tr>
+<tr><td><code>org-post-security-1000</code></td><td>50332648</td><td>Receives inspected traffic from frouter. Routes push MPLS labels and forward via GRE.</td></tr>
+<tr><td><code>LAN VRF</code> (table 1)</td><td>1</td><td>Shared LAN bridge (192.168.80.0/24). Used by frouter direct-LAN approach; requires route leaks to post-security.</td></tr>
+</table>
+
+<h2>Other Datanode Bugs Found &amp; Fixed</h2>
+
+<table class="vrf-table">
+<tr><th>#</th><th>Bug</th><th>Root Cause</th><th>Fix</th></tr>
+<tr>
+  <td>1</td>
+  <td>GRE transport interface down</td>
+  <td>Host-eth9 (203.0.113.0/24) was not being brought up &mdash; <code>setup-cnhe.sh</code> only synced eth0&ndash;eth7 MACs, missing eth8 and eth9.</td>
+  <td>Extended MAC sync loop to include <code>eth8</code> and <code>eth9</code>.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td>MPLS label 310 not processing</td>
+  <td>MPLS was not enabled on <code>gre0</code> interface. VPP silently dropped MPLS-encapsulated packets arriving via GRE.</td>
+  <td>Added <code>set interface mpls gre0 enable</code> before installing MPLS label entries.</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td>Frouter ICMP redirects</td>
+  <td>Traffic enters and exits frouter on eth1 (same interface). Linux kernel sends ICMP redirects.</td>
+  <td><code>sysctl net.ipv4.conf.all.send_redirects=0</code> on frouter-simulator.</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td>Frouter wrong default gateway MAC</td>
+  <td>Frouter default route pointed to Docker bridge gateway (192.168.80.1) instead of datanode LAN VIP. ARP resolved wrong MAC.</td>
+  <td><code>ip route replace default via $DN_LAN_IP dev eth1</code></td>
+</tr>
+<tr>
+  <td>5</td>
+  <td>Missing LAN VRF &rarr; post-security route leaks</td>
+  <td>Frouter return traffic lands in LAN VRF (table 1) which has no routes for VPN prefixes. Packets fell through to WAN default.</td>
+  <td>Added <code>ip route add $prefix table 1 via ip4-lookup-in-table $POST_TABLE_ID</code> for each VPN prefix (direct LAN approach only).</td>
+</tr>
+</table>
+
+<h2>Complete VPP Command Summary</h2>
+<p>Every VPP command executed on <code>cnhe-datanode</code> across all setup scripts, in order:</p>
+
+<pre>
+# ── Base infrastructure (setup-cnhe.sh) ──────────────────────────────
+create host-interface name eth0 .. eth9          # 10 af-packet interfaces
+set interface state host-ethX up                 # bring all up
+set interface mac address host-ethX $LINUX_MAC   # MAC sync (eth0-eth9)
+
+# ── GRE + MPLS (setup-cnhe-datanode-*.sh) ────────────────────────────
+set interface state host-eth9 up                 # GRE transport
+set interface ip address host-eth9 203.0.113.2/24
+set interface mac address host-eth9 $MAC         # MAC sync for GRE iface
+create gre tunnel src 203.0.113.2 dst 203.0.113.1
+set interface state gre0 up
+set interface ip address gre0 172.16.0.2/30
+mpls table add 0
+set interface mpls gre0 enable
+
+# ── MPLS label entries ───────────────────────────────────────────────
+mpls local-label 310 non-eos via mpls-lookup-in-table 0     # transport
+mpls local-label 1100 eos via ip4-lookup-in-table $PRE_TBL  # VPN → pre-sec
+
+# ── Pre-security routes (choose one approach) ────────────────────────
+# Direct LAN:
+ip route add 10.1.x.0/24 table $PRE_TBL via 192.168.80.100 lan
+# Geneve:
+ip route add 10.1.x.0/24 table $PRE_TBL via $PEER_IPV6 cnhe-gnv
+
+# ── VNI binding (Geneve only) ───────────────────────────────────────
+cnhe org add ip4 cnhe-gnv vni 16777215 \
+  presec-table-ip4 $PRE_TBL postsec-table-ip4 $POST_TBL
+
+# ── Post-security routes (both approaches) ──────────────────────────
+ip route add 10.1.1.0/24  table $POST_TBL via 172.16.0.1 gre0 out-labels 1400 600
+ip route add 10.1.2.0/24  table $POST_TBL via 172.16.0.1 gre0 out-labels 1500 500
+
+# ── LAN VRF route leaks (direct LAN only) ───────────────────────────
+ip route add 10.1.x.0/24 table 1 via ip4-lookup-in-table $POST_TBL
+</pre>
+
+<div class="callout callout-warn">
+<p><strong>Timing dependency:</strong> The GRE tunnel, MPLS labels, and all org VRF routes <em>must</em> be configured after the IPsec tunnel is established. The org-pre-security and org-post-security VRFs do not exist until the datanode-agent establishes the IPsec tunnel with cortex.</p>
+</div>
+
+</div><!-- /sc-content -->
+</div><!-- /tab-setup-guide -->
 
 <!-- Overlay -->
 <div class="overlay" id="overlay" onclick="closeDetail()"></div>
@@ -965,7 +1247,8 @@ function switchTab(tabId) {
   for (var i = 0; i < buttons.length; i++) {
     if (buttons[i].textContent.toLowerCase().replace(/\s+/g,'-') === tabId ||
         (tabId === 'topology' && buttons[i].textContent === 'Topology') ||
-        (tabId === 'service-chaining' && buttons[i].textContent === 'Service Chaining'))
+        (tabId === 'service-chaining' && buttons[i].textContent === 'Service Chaining') ||
+        (tabId === 'setup-guide' && buttons[i].textContent === 'Setup Guide'))
       buttons[i].classList.add('active');
   }
 }
